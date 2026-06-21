@@ -1,0 +1,137 @@
+{
+  "subjects": {
+    "caption": "Participant identity, consent, demographics, eligibility, inclusion exclusion, enrollment status, withdrawal, screening identifiers, contact details, and subject tracking forms.",
+    "examples": [
+      "Patient Contact Log participant contact detail tracking form",
+      "Patient Email participant email address contact information form",
+      "Screening ID Study ID Linkage participant identifier crosswalk form",
+      "eConsent Electronic Consent remote consent documentation form",
+      "Consent Capacity participant consent decision ability eligibility assessment",
+      "Enrollment Verification participant inclusion and enrollment status form",
+      "Withdrawal Status participant study withdrawal tracking form"
+    ]
+  },
+  "assessments": {
+    "caption": "Clinical, psychiatric, cognitive, diagnostic, self-report, clinician-rated, and symptom severity assessments or questionnaires, including depression, anxiety, mania, affect, hopelessness, suicide ideation, and suicide risk scales.",
+    "examples": [
+      "MADRS Montgomery Asberg Depression Rating Scale clinician-rated depression severity assessment",
+      "MADRS-S Montgomery Asberg Depression Rating Scale Self-report depression symptom survey",
+      "MADRS-S 24 Hour Version Montgomery Asberg Depression Rating Scale 24-hour self-report depression symptom survey",
+      "GRID HAMD17 GRID Hamilton Depression Rating Scale 17-item clinician-rated depression severity assessment",
+      "MSSI Modified Scale for Suicidal Ideation suicide ideation severity assessment",
+      "PHQ Patient Health Questionnaire depression symptom questionnaire",
+      "PHQ-8 Patient Health Questionnaire 8-item depression symptom scale",
+      "IMS-12 Immediate Mood Scaler 12-item mood symptom survey",
+      "SCID Structured Clinical Interview for DSM diagnostic interview",
+      "C-SSRS Columbia Suicide Severity Rating Scale suicide risk assessment",
+      "BHS Beck Hopelessness Scale hopelessness assessment",
+      "BSS SSI-C Beck Scale for Suicide Ideation Scale for Suicide Ideation Current suicide ideation assessment",
+      "BDI Q9 SI Beck Depression Inventory question 9 suicidal ideation item",
+      "YMRS Young Mania Rating Scale clinician-rated mania severity assessment",
+      "SIGH-A Structured Interview Guide for the Hamilton Anxiety Rating Scale clinician-rated anxiety assessment",
+      "QIDS Quick Inventory of Depressive Symptomatology depression symptom severity assessment",
+      "HAMD6 Hamilton Depression Rating Scale 6-item clinician-rated depression severity assessment",
+      "PANAS Positive and Negative Affect Schedule affect questionnaire",
+      "YGTSS Yale Global Tic Severity Scale tic symptom severity assessment",
+      "MEQ Morningness-Eveningness Questionnaire circadian preference and chronotype assessment",
+      "S-IAT Suicide Implicit Association Test a specialized behavioral test used to help assess suicide risk",
+      "IAT Implicit Association Test behavioral association task",
+      "Holmes-Rahe LSSS Holmes and Rahe Life Stress Scale stressful life events and social readjustment stress burden assessment",
+      "Maudsley Thase Rush treatment resistance staging assessment antidepressant treatment resistance measure",
+      "Maudsley Staging Method Thase Rush antidepressant treatment resistance assessment",
+      "CAGE questionnaire brief 4-question screening tool for potential alcohol use disorder AUD",
+      "PSQI Pittsburgh Sleep Quality Index sleep quality questionnaire",
+      "WHOQOL-BREF World Health Organization Quality of Life Brief quality of life assessment",
+      "Y-BOCS-II Yale-Brown Obsessive Compulsive Scale Second Edition obsessive-compulsive symptom severity assessment",
+      "YBOCS2 Yale-Brown Obsessive Compulsive Scale Second Edition obsessive-compulsive symptom severity assessment",
+      "YBOCS-2 Yale-Brown Obsessive Compulsive Scale Second Edition obsessive-compulsive symptom severity assessment",
+      "Repetitive Behavior Questions repetitive behavior symptom questionnaire",
+      "PVSS Positive Valence Systems Scale positive valence reward and motivation assessment",
+      "DARS Dimensional Anhedonia Rating Scale anhedonia symptom assessment",
+      "WSAS Work and Social Adjustment Scale functional impairment assessment",
+      "SNAP-IV Swanson Nolan and Pelham Rating Scale Fourth Edition ADHD and oppositional behavior symptom assessment",
+      "BEST-S Borderline Evaluation of Severity over Time Self-report borderline personality symptom severity assessment",
+      "Hacks Impairment Index neurologic psychomotor impairment assessment of speech cognition motor coordination and nystagmus",
+      "MINI DSM5 Mini International Neuropsychiatric Interview for DSM-5 structured diagnostic interview with certified assessor administration",
+      "FIGS Family Interview for Genetic Studies structured family psychiatric history interview",
+      "CTQ Childhood Trauma Questionnaire retrospective self-report childhood trauma and maltreatment assessment",
+      "GAD-7 Generalized Anxiety Disorder 7-item Scale anxiety symptom severity questionnaire",
+      "CGI-I Clinical Global Impressions Improvement clinician-rated global improvement assessment",
+      "CGI-S Clinical Global Impressions Severity clinician-rated global illness severity assessment",
+      "VAS Visual Analog Scale subjective symptom intensity rating assessment",
+      "Edinburgh Handedness Inventory Short Form handedness laterality assessment",
+      "DSII-S Demoralization Scale-II Self-report demoralization symptom assessment",
+      "SHAPS Snaith-Hamilton Pleasure Scale hedonic capacity and anhedonia assessment",
+      "PIRS-20 Insomnia Rating Scale 20-item insomnia symptom severity assessment",
+      "RRS-22 Ruminative Responses Scale 22-item repetitive negative thinking and rumination assessment"
+    ]
+  },
+  "treatments": {
+    "caption": "Treatment delivery, TMS procedures, medication history, medication changes, Antidepressant Treatment History Form ATHF, TMS motor thresholds MT, Active Participant Passive Participant A/P rating groups, stimulation sessions, dosing, and therapy checklists.",
+    "examples": [
+      "TMS Transcranial Magnetic Stimulation treatment delivery checklist",
+      "MT Motor Threshold TMS motor threshold log",
+      "Log of Motor Thresholds TMS motor threshold measurement tracking form",
+      "Current Medication Form current medication exposure and treatment tracking form",
+      "Medication Changes medication adjustment and treatment change tracking form",
+      "Past Medication Form lifetime medication exposure history",
+      "ATHF Antidepressant Treatment History Form current lifetime medication trials",
+      "A/P Rating Active Participant Passive Participant treatment group rating",
+      "Participant A/P Rating first day end of treatment active passive participant rating",
+      "Treatment Day Procedure treatment delivery session workflow form",
+      "MagVenture Code MagVenture transcranial magnetic stimulation device code and treatment setup identifier"
+    ]
+  },
+  "neuroimaging": {
+    "caption": "MRI, fMRI, EEG, TEP, neuroimaging safety, scan checklists, imaging targeting, preprocessing, DICOM, and neurophysiology acquisition forms.",
+    "examples": [
+      "MRI Magnetic Resonance Imaging safety screening form",
+      "fMRI functional Magnetic Resonance Imaging targeting form",
+      "fMRI functional Magnetic Resonance Imaging preprocessing workflow",
+      "EEG Electroencephalography run sheet checklist",
+      "TEP TMS-evoked potentials neurophysiology acquisition form",
+      "DICOM Digital Imaging and Communications in Medicine scan session metadata",
+      "Outpatient MRI Magnetic Resonance Imaging scan checklist"
+    ]
+  },
+  "biologics_biometrics": {
+    "caption": "Biological specimens, laboratory screens, urine pregnancy or toxicology, heart rate variability, physiological measures, ECG, vitals, wearable actigraphy accelerometer monitors, and biometric signals.",
+    "examples": [
+      "Urine Pregnancy Screen biological pregnancy status laboratory screen",
+      "Urine Toxicology Screen substance exposure laboratory screen",
+      "HRV Heart Rate Variability physiological autonomic biomarker",
+      "Blood Biomarker Sample biological specimen collection form",
+      "Vital Signs physiological blood pressure pulse and temperature measures",
+      "ECG Electrocardiogram cardiac biometric recording",
+      "GENEActiv Checklist wearable actigraphy accelerometer activity and sleep biometric monitor"
+    ]
+  },
+  "safety_regulatory": {
+    "caption": "Adverse events, serious adverse events, protocol deviations, safety screening, TASS TMS Safety Form, regulatory notes, progress notes, note to file, clinical narratives, COVID screeners, and risk documentation.",
+    "examples": [
+      "AE Adverse Event safety screening",
+      "SAE Serious Adverse Event safety reporting",
+      "AE SAE adverse event serious adverse event log",
+      "AE Daily Screening NIH adverse event daily screening",
+      "Subject-specific AE Adverse Event participant-level adverse event tracking log",
+      "PD Protocol Deviation regulatory protocol exception tracking log",
+      "NTF Note To File regulatory documentation and study issue memo",
+      "Progress Note clinical safety narrative and regulatory documentation form",
+      "TASS TMS Safety Form transcranial magnetic stimulation safety screening",
+      "Clinical Free Text Narrative clinician-entered safety and regulatory note field",
+      "COVID19 Coronavirus Disease 2019 safety screener",
+      "SAFER criteria State versus trait Assessability Face and Ecological validity Rule of 3Ps",
+      "SAFER Rule of 3Ps pervasive persistent pathological"
+    ]
+  },
+  "admin": {
+    "caption": "Administrative operations, delegation logs, survey triggers, workflow tracking, scheduling, staff operations, and non-clinical study management forms.",
+    "examples": [
+      "Delegation Log study staff role and responsibility tracking form",
+      "Survey Trigger automated participant survey scheduling form",
+      "Study Operations Tracking administrative workflow tracking form",
+      "Site Staff Administration non-clinical study management form",
+      "Workflow Notification administrative reminder and operations form"
+    ]
+  }
+}
