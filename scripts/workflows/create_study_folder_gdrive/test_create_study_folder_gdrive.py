@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openpyxl import Workbook, load_workbook
 
@@ -13,6 +14,7 @@ from scripts.workflows.create_study_folder_gdrive.run import (
     plan_cleaned_uploads,
     replace_placeholders,
     rewrite_data_map_locations,
+    upload_cleaned_data,
 )
 
 
@@ -61,6 +63,18 @@ class FakeDriveClient:
                 mime_type="application/vnd.google-apps.folder",
                 web_url="https://drive.google.com/drive/folders/templates_folder",
             ),
+            "blank_template": DriveFile(
+                id="blank_template",
+                name="BLANK",
+                mime_type="application/vnd.google-apps.spreadsheet",
+                web_url="https://docs.google.com/spreadsheets/d/blank_template/edit",
+            ),
+            "redcap_template": DriveFile(
+                id="redcap_template",
+                name="REDCap_INSTRUMENT",
+                mime_type="application/vnd.google-apps.spreadsheet",
+                web_url="https://docs.google.com/spreadsheets/d/redcap_template/edit",
+            ),
             "data_map_folder": DriveFile(
                 id="data_map_folder",
                 name="Data Map (internal/approved-access)",
@@ -79,11 +93,15 @@ class FakeDriveClient:
             "overview_folder": ["overview_file"],
             "data_folder": ["nophi_folder"],
             "nophi_folder": ["templates_folder"],
+            "templates_folder": ["blank_template", "redcap_template"],
             "data_map_folder": ["data_map_file"],
             "dest": [],
         }
         self.created_folders = []
         self.copied_files = []
+        self.uploaded_files = []
+        self.updated_files = []
+        self.trashed_files = []
 
     def list_children(self, folder_id):
         return [self.files[file_id] for file_id in self.children.get(folder_id, [])]
@@ -118,6 +136,37 @@ class FakeDriveClient:
         self.children.setdefault(parent_id, []).append(copy_id)
         self.copied_files.append((file_id, name, parent_id))
         return drive_file
+
+    def upload_file(self, local_path, name, parent_id):
+        upload_id = f"upload_{len(self.uploaded_files) + 1}"
+        drive_file = DriveFile(
+            id=upload_id,
+            name=name,
+            mime_type="application/octet-stream",
+            web_url=f"https://drive.google.com/file/d/{upload_id}/view",
+        )
+        self.files[upload_id] = drive_file
+        self.children.setdefault(parent_id, []).append(upload_id)
+        self.uploaded_files.append((str(local_path), name, parent_id))
+        return drive_file
+
+    def update_file(self, local_path, file_id, name=None):
+        existing = self.files[file_id]
+        updated = DriveFile(
+            id=existing.id,
+            name=name or existing.name,
+            mime_type=existing.mime_type,
+            web_url=existing.web_url,
+        )
+        self.files[file_id] = updated
+        self.updated_files.append((str(local_path), file_id, name))
+        return updated
+
+    def trash_file(self, file_id):
+        self.trashed_files.append(file_id)
+        for children in self.children.values():
+            if file_id in children:
+                children.remove(file_id)
 
 
 def create_redcap_workbook(path: Path) -> None:
@@ -169,6 +218,31 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
         self.assertEqual(result.files_by_relative_path["Overview/OCD-TMS_53879"].name, "OCD-TMS_53879")
         self.assertEqual(result.files_by_relative_path["53879-meta"].name, "53879-meta")
 
+    def test_update_or_create_template_tree_reuses_existing_study_root(self):
+        fake_drive = FakeDriveClient()
+        existing_root = DriveFile(
+            id="existing_root",
+            name="OCD-TMS 53879 Template",
+            mime_type="application/vnd.google-apps.folder",
+            web_url="https://drive.google.com/drive/folders/existing_root",
+        )
+        fake_drive.files[existing_root.id] = existing_root
+        fake_drive.children["dest"].append(existing_root.id)
+        fake_drive.children[existing_root.id] = []
+
+        result = copy_template_tree(
+            drive=fake_drive,
+            template_folder_id="template",
+            destination_parent_id="dest",
+            study_name="OCD-TMS",
+            irb="53879",
+            existing_file_policy="update-or-create",
+        )
+
+        self.assertEqual(result.root.id, "existing_root")
+        self.assertNotIn(("OCD-TMS 53879 Template", "dest"), fake_drive.created_folders)
+        self.assertIn("53879-meta", result.files_by_relative_path)
+
     def test_find_drive_path_matches_nested_template_locations(self):
         fake_drive = FakeDriveClient()
 
@@ -200,6 +274,74 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             self.assertEqual(by_name["53879-madrs.xlsx"].relative_parent, Path("assessments"))
             self.assertEqual(by_name["subject_timepoints.xlsx"].template_name, "BLANK")
             self.assertEqual(by_name["subject_timepoints.xlsx"].relative_parent, Path("subjects"))
+
+    def test_update_or_create_cleaned_upload_reuses_existing_template_sheet(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_drive = FakeDriveClient()
+            study = Path(tmpdir) / "study"
+            subjects = study / "data" / "cleaned" / "subjects"
+            subjects.mkdir(parents=True)
+            dictionary = subjects / "dictionary.xlsx"
+            create_plain_workbook(dictionary)
+            subjects_folder = fake_drive.create_folder("subjects", "nophi_folder")
+            existing = DriveFile(
+                id="existing_dictionary",
+                name="dictionary",
+                mime_type="application/vnd.google-apps.spreadsheet",
+                web_url="https://docs.google.com/spreadsheets/d/existing_dictionary/edit",
+            )
+            fake_drive.files[existing.id] = existing
+            fake_drive.children[subjects_folder.id].append(existing.id)
+
+            with patch("scripts.workflows.create_study_folder_gdrive.run.fill_in_overview") as fill:
+                results = upload_cleaned_data(
+                    drive=fake_drive,
+                    target_data_folder_id="nophi_folder",
+                    template_folder_id="templates_folder",
+                    study_folder=study,
+                    access_token="token",
+                    existing_file_policy="update-or-create",
+                )
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].drive_file.id, "existing_dictionary")
+            self.assertEqual(fake_drive.copied_files, [])
+            fill.assert_called_once()
+            self.assertEqual(fill.call_args.kwargs["target"], "existing_dictionary")
+
+    def test_replace_cleaned_upload_trashes_existing_template_sheet_then_copies(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_drive = FakeDriveClient()
+            study = Path(tmpdir) / "study"
+            subjects = study / "data" / "cleaned" / "subjects"
+            subjects.mkdir(parents=True)
+            dictionary = subjects / "dictionary.xlsx"
+            create_plain_workbook(dictionary)
+            subjects_folder = fake_drive.create_folder("subjects", "nophi_folder")
+            existing = DriveFile(
+                id="existing_dictionary",
+                name="dictionary",
+                mime_type="application/vnd.google-apps.spreadsheet",
+                web_url="https://docs.google.com/spreadsheets/d/existing_dictionary/edit",
+            )
+            fake_drive.files[existing.id] = existing
+            fake_drive.children[subjects_folder.id].append(existing.id)
+
+            with patch("scripts.workflows.create_study_folder_gdrive.run.fill_in_overview") as fill:
+                results = upload_cleaned_data(
+                    drive=fake_drive,
+                    target_data_folder_id="nophi_folder",
+                    template_folder_id="templates_folder",
+                    study_folder=study,
+                    access_token="token",
+                    existing_file_policy="replace",
+                )
+
+            self.assertEqual(fake_drive.trashed_files, ["existing_dictionary"])
+            self.assertEqual(results[0].drive_file.id, "copy_1")
+            self.assertEqual(fake_drive.copied_files, [("blank_template", "dictionary", subjects_folder.id)])
+            fill.assert_called_once()
+            self.assertEqual(fill.call_args.kwargs["target"], "copy_1")
 
     def test_redcap_template_lookup_uses_actual_template_name_and_legacy_aliases(self):
         template = DriveFile(

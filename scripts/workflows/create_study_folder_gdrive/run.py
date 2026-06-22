@@ -67,6 +67,8 @@ LOCAL_TOP_LEVEL_EXCLUDE = {"data", "data-map", "overview", "histories", "studies
 DEFAULT_CLEANED_GDRIVE_PATH = "Data (internal/approved-access)/No-PHI Data (internal/approved-access)"
 DEFAULT_TEMPLATE_GDRIVE_PATH = f"{DEFAULT_CLEANED_GDRIVE_PATH}/blank_templates"
 DEFAULT_DATA_MAP_FOLDER = "Data Map (internal/approved-access)"
+EXISTING_FILE_POLICIES = ("update-or-create", "skip", "duplicate", "replace", "fail")
+DEFAULT_EXISTING_FILE_POLICY = "update-or-create"
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,15 @@ class DriveHttpClient(Protocol):
     ) -> DriveResponse:
         ...
 
+    def patch(
+        self,
+        url: str,
+        body: bytes,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> DriveResponse:
+        ...
+
 
 class UrllibDriveHttpClient:
     def get(self, url: str, headers: Mapping[str, str], timeout: float) -> DriveResponse:
@@ -123,6 +134,21 @@ class UrllibDriveHttpClient:
             data=body,
             headers=dict(headers),
             method="POST",
+        )
+        return _send_drive_request(request, timeout)
+
+    def patch(
+        self,
+        url: str,
+        body: bytes,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> DriveResponse:
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers=dict(headers),
+            method="PATCH",
         )
         return _send_drive_request(request, timeout)
 
@@ -234,6 +260,42 @@ class GoogleDriveClient:
         )
         return drive_file_from_payload(self.http_client.post(url, body, headers, self.timeout).payload)
 
+    def update_file(self, local_path: Path, file_id: str, name: str | None = None) -> DriveFile:
+        mime_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
+        boundary = f"codex_{uuid.uuid4().hex}"
+        metadata = {"name": name} if name else {}
+        body = build_multipart_upload_body(
+            metadata=metadata,
+            file_bytes=local_path.read_bytes(),
+            file_mime_type=mime_type,
+            boundary=boundary,
+        )
+        headers = {
+            **self.upload_headers,
+            "Content-Type": f"multipart/related; boundary={boundary}",
+            "Content-Length": str(len(body)),
+        }
+        url = (
+            f"{DRIVE_UPLOAD_ROOT}/{file_id}"
+            "?uploadType=multipart&supportsAllDrives=true&fields=id,name,mimeType,webViewLink"
+        )
+        return drive_file_from_payload(self.http_client.patch(url, body, headers, self.timeout).payload)
+
+    def trash_file(self, file_id: str) -> DriveFile:
+        url = (
+            f"{DRIVE_API_ROOT}/{file_id}"
+            "?supportsAllDrives=true&fields=id,name,mimeType,webViewLink"
+        )
+        payload = {"trashed": True}
+        return drive_file_from_payload(
+            self.http_client.patch(
+                url,
+                json.dumps(payload).encode("utf-8"),
+                self.headers,
+                self.timeout,
+            ).payload
+        )
+
 
 @dataclass(frozen=True)
 class TemplateCopyResult:
@@ -330,6 +392,55 @@ def replace_placeholders(name: str, *, study_name: str, irb: str) -> str:
     return name.replace("STUDY", study_name).replace("IRB", irb)
 
 
+def validate_existing_file_policy(policy: str) -> str:
+    if policy not in EXISTING_FILE_POLICIES:
+        raise ValueError(
+            f"Invalid existing file policy {policy!r}; expected one of {', '.join(EXISTING_FILE_POLICIES)}"
+        )
+    return policy
+
+
+def resolve_existing_drive_file(
+    *,
+    drive: Any,
+    parent_id: str,
+    name: str,
+    existing_file_policy: str,
+) -> DriveFile | None:
+    policy = validate_existing_file_policy(existing_file_policy)
+    if policy == "duplicate":
+        return None
+    existing = find_child_by_name(drive, parent_id, name)
+    if existing is None:
+        return None
+    if policy == "fail":
+        raise FileExistsError(f"Google Drive file already exists: {name}")
+    if policy == "replace":
+        drive.trash_file(existing.id)
+        return None
+    return existing
+
+
+def find_or_create_drive_folder(
+    *,
+    drive: Any,
+    parent_id: str,
+    name: str,
+    existing_file_policy: str,
+) -> DriveFile:
+    existing = resolve_existing_drive_file(
+        drive=drive,
+        parent_id=parent_id,
+        name=name,
+        existing_file_policy=existing_file_policy,
+    )
+    if existing is not None:
+        if not existing.is_folder:
+            raise FileExistsError(f"Google Drive item exists but is not a folder: {name}")
+        return existing
+    return drive.create_folder(name, parent_id)
+
+
 def irb_meta_path_candidates(irb_meta_path: str, *, study_name: str, irb: str) -> list[str]:
     resolved = replace_placeholders(irb_meta_path, study_name=study_name, irb=irb)
     candidates = [resolved]
@@ -345,10 +456,16 @@ def copy_template_tree(
     destination_parent_id: str,
     study_name: str,
     irb: str,
+    existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
 ) -> TemplateCopyResult:
     template_root = drive.get_file(template_folder_id)
     root_name = replace_placeholders(template_root.name, study_name=study_name, irb=irb)
-    root_copy = drive.create_folder(root_name, destination_parent_id)
+    root_copy = find_or_create_drive_folder(
+        drive=drive,
+        parent_id=destination_parent_id,
+        name=root_name,
+        existing_file_policy=existing_file_policy,
+    )
     files_by_relative_path: dict[str, DriveFile] = {}
 
     def copy_children(source_folder_id: str, dest_folder: DriveFile, relative_parent: Path) -> None:
@@ -356,11 +473,25 @@ def copy_template_tree(
             child_name = replace_placeholders(child.name, study_name=study_name, irb=irb)
             relative_path = relative_parent / child_name
             if child.is_folder:
-                copied_folder = drive.create_folder(child_name, dest_folder.id)
+                copied_folder = find_or_create_drive_folder(
+                    drive=drive,
+                    parent_id=dest_folder.id,
+                    name=child_name,
+                    existing_file_policy=existing_file_policy,
+                )
                 files_by_relative_path[relative_path.as_posix()] = copied_folder
                 copy_children(child.id, copied_folder, relative_path)
             else:
-                copied_file = drive.copy_file(child.id, child_name, dest_folder.id)
+                copied_file = resolve_existing_drive_file(
+                    drive=drive,
+                    parent_id=dest_folder.id,
+                    name=child_name,
+                    existing_file_policy=existing_file_policy,
+                )
+                if copied_file is not None and copied_file.is_folder:
+                    raise FileExistsError(f"Google Drive item exists but is a folder: {child_name}")
+                if copied_file is None:
+                    copied_file = drive.copy_file(child.id, child_name, dest_folder.id)
                 files_by_relative_path[relative_path.as_posix()] = copied_file
 
     copy_children(template_folder_id, root_copy, Path(""))
@@ -551,16 +682,22 @@ def find_template_by_name(template_folder_children: list[DriveFile], template_na
     return None
 
 
-def find_or_create_drive_folder_path(drive: Any, root_folder_id: str, relative_path: Path) -> DriveFile:
+def find_or_create_drive_folder_path(
+    drive: Any,
+    root_folder_id: str,
+    relative_path: Path,
+    existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
+) -> DriveFile:
     current = DriveFile(id=root_folder_id, name="", mime_type=FOLDER_MIME_TYPE)
     for part in relative_path.parts:
         if part in {"", "."}:
             continue
-        existing = find_child_by_name(drive, current.id, part)
-        if existing and existing.is_folder:
-            current = existing
-        else:
-            current = drive.create_folder(part, current.id)
+        current = find_or_create_drive_folder(
+            drive=drive,
+            parent_id=current.id,
+            name=part,
+            existing_file_policy=existing_file_policy,
+        )
     return current
 
 
@@ -586,7 +723,9 @@ def upload_cleaned_data(
     cleaned_data_dir: Path | None = None,
     sheets_client: SheetsHttpClient | None = None,
     timeout: float = 120.0,
+    existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
 ) -> list[UploadedFile]:
+    validate_existing_file_policy(existing_file_policy)
     plans = plan_cleaned_uploads(study_folder, cleaned_data_dir)
     templates = drive.list_children(template_folder_id) if template_folder_id else []
     sheets_client = sheets_client or UrllibSheetsHttpClient()
@@ -594,30 +733,59 @@ def upload_cleaned_data(
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir)
         for plan in plans:
-            parent = find_or_create_drive_folder_path(drive, target_data_folder_id, plan.relative_parent)
+            parent = find_or_create_drive_folder_path(
+                drive,
+                target_data_folder_id,
+                plan.relative_parent,
+                existing_file_policy=DEFAULT_EXISTING_FILE_POLICY,
+            )
             try:
                 if plan.template_name:
                     template = find_template_by_name(templates, plan.template_name)
                     if template is None:
                         raise FileNotFoundError(f"Missing Google template: {plan.template_name}")
-                    copied = drive.copy_file(template.id, plan.local_path.stem, parent.id)
+                    copied = resolve_existing_drive_file(
+                        drive=drive,
+                        parent_id=parent.id,
+                        name=plan.local_path.stem,
+                        existing_file_policy=existing_file_policy,
+                    )
+                    if copied is not None and not copied.is_google_sheet:
+                        raise FileExistsError(
+                            f"Existing Google Drive item is not a Google Sheet: {plan.local_path.stem}"
+                        )
+                    reused_existing = copied is not None
+                    if copied is None:
+                        copied = drive.copy_file(template.id, plan.local_path.stem, parent.id)
                     workbook_path = (
                         workbook_from_csv(plan.local_path, temp_dir)
                         if plan.local_path.suffix.lower() == ".csv"
                         else plan.local_path
                     )
-                    fill_in_overview(
-                        target=copied.id,
-                        overview_file=workbook_path,
-                        access_token=access_token,
-                        http_client=sheets_client,
-                        timeout=timeout,
-                        write_full_sheet_when_no_headers=True,
-                        sync_template_tab_to_source_sheets=plan.template_name == BLANK_TEMPLATE_NAME,
-                    )
+                    if existing_file_policy != "skip" or not reused_existing:
+                        fill_in_overview(
+                            target=copied.id,
+                            overview_file=workbook_path,
+                            access_token=access_token,
+                            http_client=sheets_client,
+                            timeout=timeout,
+                            write_full_sheet_when_no_headers=True,
+                            sync_template_tab_to_source_sheets=plan.template_name == BLANK_TEMPLATE_NAME,
+                        )
                     results.append(UploadedFile(plan.local_path, plan.relative_path, copied))
                 else:
-                    uploaded = drive.upload_file(plan.local_path, plan.local_path.name, parent.id)
+                    existing = resolve_existing_drive_file(
+                        drive=drive,
+                        parent_id=parent.id,
+                        name=plan.local_path.name,
+                        existing_file_policy=existing_file_policy,
+                    )
+                    if existing is None:
+                        uploaded = drive.upload_file(plan.local_path, plan.local_path.name, parent.id)
+                    elif existing_file_policy == "skip":
+                        uploaded = existing
+                    else:
+                        uploaded = drive.update_file(plan.local_path, existing.id, plan.local_path.name)
                     results.append(UploadedFile(plan.local_path, plan.relative_path, uploaded))
             except Exception as exc:  # continue batch and log failures
                 results.append(UploadedFile(plan.local_path, plan.relative_path, None, str(exc)))
@@ -668,17 +836,40 @@ def upload_extra_local_folders(
     drive: Any,
     study_folder: Path,
     gdrive_study_folder_id: str,
+    existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
 ) -> list[UploadedFile]:
+    validate_existing_file_policy(existing_file_policy)
     results: list[UploadedFile] = []
     for item in sorted(study_folder.iterdir()):
         if not item.is_dir() or item.name in LOCAL_TOP_LEVEL_EXCLUDE or item.name.startswith("."):
             continue
-        parent = drive.create_folder(item.name, gdrive_study_folder_id)
+        parent = find_or_create_drive_folder(
+            drive=drive,
+            parent_id=gdrive_study_folder_id,
+            name=item.name,
+            existing_file_policy=DEFAULT_EXISTING_FILE_POLICY,
+        )
         for path in sorted(child for child in item.rglob("*") if child.is_file()):
             relative_path = path.relative_to(study_folder)
-            target_parent = find_or_create_drive_folder_path(drive, parent.id, path.parent.relative_to(item))
+            target_parent = find_or_create_drive_folder_path(
+                drive,
+                parent.id,
+                path.parent.relative_to(item),
+                existing_file_policy=DEFAULT_EXISTING_FILE_POLICY,
+            )
             try:
-                uploaded = drive.upload_file(path, path.name, target_parent.id)
+                existing = resolve_existing_drive_file(
+                    drive=drive,
+                    parent_id=target_parent.id,
+                    name=path.name,
+                    existing_file_policy=existing_file_policy,
+                )
+                if existing is None:
+                    uploaded = drive.upload_file(path, path.name, target_parent.id)
+                elif existing_file_policy == "skip":
+                    uploaded = existing
+                else:
+                    uploaded = drive.update_file(path, existing.id, path.name)
                 results.append(UploadedFile(path, relative_path, uploaded))
             except Exception as exc:
                 results.append(UploadedFile(path, relative_path, None, str(exc)))
@@ -709,6 +900,7 @@ def initialize_drive_folder(
     irb: str,
     irb_meta_path: str = "IRB-meta",
     timeout: float = 120.0,
+    existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
 ) -> TemplateCopyResult:
     result = copy_template_tree(
         drive=drive,
@@ -716,6 +908,7 @@ def initialize_drive_folder(
         destination_parent_id=resolve_drive_id(destination),
         study_name=study_name,
         irb=irb,
+        existing_file_policy=existing_file_policy,
     )
     irb_meta = None
     for candidate in irb_meta_path_candidates(irb_meta_path, study_name=study_name, irb=irb):
@@ -763,8 +956,10 @@ def run_workflow(
     irb_meta_path: str = "IRB-meta",
     access_token: str | None = None,
     timeout: float = 120.0,
+    existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
 ) -> WorkflowState:
     study_folder = Path(study_folder)
+    validate_existing_file_policy(existing_file_policy)
     token = resolve_access_token(access_token)
     drive = GoogleDriveClient(token, timeout=timeout)
     sheets_client = UrllibSheetsHttpClient()
@@ -785,6 +980,7 @@ def run_workflow(
             irb=irb,
             irb_meta_path=irb_meta_path,
             timeout=timeout,
+            existing_file_policy=existing_file_policy,
         )
         state.initialized_root = copy_result.root
     elif initialized_folder_id:
@@ -826,6 +1022,7 @@ def run_workflow(
                 cleaned_data_dir=Path(cleaned_data_dir) if cleaned_data_dir else None,
                 sheets_client=sheets_client,
                 timeout=timeout,
+                existing_file_policy=existing_file_policy,
             )
             successes = [result for result in state.upload_results if result.ok]
             failures = [result for result in state.upload_results if not result.ok]
@@ -844,6 +1041,7 @@ def run_workflow(
                 drive=drive,
                 study_folder=study_folder,
                 gdrive_study_folder_id=state.initialized_root.id,
+                existing_file_policy=existing_file_policy,
             )
             if extra_uploads:
                 state.upload_results.extend(extra_uploads)
@@ -907,6 +1105,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--templates-folder-id", help="Google Drive folder id/link containing REDCap_INSTRUMENT and BLANK templates.")
     parser.add_argument("--data-map-destination", help="Google Sheet URL/id/path for data map destination.")
     parser.add_argument("--data-map-dir", type=Path, help="Local data-map directory.")
+    parser.add_argument(
+        "--existing-file-policy",
+        choices=EXISTING_FILE_POLICIES,
+        default=DEFAULT_EXISTING_FILE_POLICY,
+        help=(
+            "How to handle Drive files that already exist at the target path. "
+            "Default updates existing files or creates missing files."
+        ),
+    )
     parser.add_argument("--access-token", help="Google OAuth token. Defaults to env/gcloud lookup.")
     parser.add_argument("--timeout", type=float, default=120.0, help="Google API timeout in seconds.")
     return parser
@@ -932,6 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
         irb_meta_path=args.irb_meta_path,
         access_token=args.access_token,
         timeout=args.timeout,
+        existing_file_policy=args.existing_file_policy,
     )
     print(
         json.dumps(
