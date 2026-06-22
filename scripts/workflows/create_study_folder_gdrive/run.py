@@ -327,9 +327,15 @@ def resolve_drive_id(value: str | Path) -> str:
 
 
 def replace_placeholders(name: str, *, study_name: str, irb: str) -> str:
-    if name == "IRB-meta":
-        return name
     return name.replace("STUDY", study_name).replace("IRB", irb)
+
+
+def irb_meta_path_candidates(irb_meta_path: str, *, study_name: str, irb: str) -> list[str]:
+    resolved = replace_placeholders(irb_meta_path, study_name=study_name, irb=irb)
+    candidates = [resolved]
+    if irb_meta_path != resolved:
+        candidates.append(irb_meta_path)
+    return candidates
 
 
 def copy_template_tree(
@@ -711,7 +717,11 @@ def initialize_drive_folder(
         study_name=study_name,
         irb=irb,
     )
-    irb_meta = find_by_relative_path(result.files_by_relative_path, irb_meta_path)
+    irb_meta = None
+    for candidate in irb_meta_path_candidates(irb_meta_path, study_name=study_name, irb=irb):
+        irb_meta = find_by_relative_path(result.files_by_relative_path, candidate)
+        if irb_meta is not None:
+            break
     if irb_meta and irb_meta.is_google_sheet:
         fill_irb_meta(
             sheets_client=sheets_client,

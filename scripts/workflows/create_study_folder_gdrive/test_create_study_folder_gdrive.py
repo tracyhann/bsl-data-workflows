@@ -146,6 +146,10 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             replace_placeholders("STUDY_IRB overview", study_name="OCD-TMS", irb="53879"),
             "OCD-TMS_53879 overview",
         )
+        self.assertEqual(
+            replace_placeholders("IRB-meta", study_name="OCD-TMS", irb="53879"),
+            "53879-meta",
+        )
 
     def test_copies_template_tree_with_placeholder_renames(self):
         fake_drive = FakeDriveClient()
@@ -160,9 +164,10 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
 
         self.assertEqual(result.root.name, "OCD-TMS 53879 Template")
         copied_names = [copy_call[1] for copy_call in fake_drive.copied_files]
-        self.assertIn("IRB-meta", copied_names)
+        self.assertIn("53879-meta", copied_names)
         self.assertIn("OCD-TMS_53879", copied_names)
         self.assertEqual(result.files_by_relative_path["Overview/OCD-TMS_53879"].name, "OCD-TMS_53879")
+        self.assertEqual(result.files_by_relative_path["53879-meta"].name, "53879-meta")
 
     def test_find_drive_path_matches_nested_template_locations(self):
         fake_drive = FakeDriveClient()
