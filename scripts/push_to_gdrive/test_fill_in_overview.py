@@ -197,6 +197,62 @@ class FillInOverviewTests(unittest.TestCase):
             self.assertEqual(result.updated_cell_count, 0)
             self.assertEqual(fake_client.post_calls, [])
 
+    def test_can_write_full_sheet_when_target_tab_has_no_headers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            overview = Path(tmpdir) / "overview.xlsx"
+            make_overview(overview)
+            fake_client = FakeSheetsHttpClient(
+                metadata={
+                    "sheets": [
+                        {
+                            "properties": {
+                                "sheetId": 123,
+                                "title": "Assessments",
+                                "gridProperties": {"rowCount": 1, "columnCount": 1},
+                            }
+                        }
+                    ]
+                },
+                headers_by_sheet={"Assessments": []},
+            )
+
+            result = fill_in_overview(
+                target="1MCjkVtR1lOJol8f95sK_W7bYdm8Bz1BkZbwJy410sYQ",
+                overview_file=overview,
+                access_token="token",
+                http_client=fake_client,
+                write_full_sheet_when_no_headers=True,
+            )
+
+            self.assertEqual(result.updated_tabs, ["Assessments"])
+            self.assertEqual(result.updated_cell_count, 12)
+            batch_calls = [
+                call for call in fake_client.post_calls if call["url"].endswith(":batchUpdate")
+            ]
+            self.assertEqual(
+                batch_calls[0]["payload"],
+                {
+                    "requests": [
+                        {"appendDimension": {"sheetId": 123, "dimension": "ROWS", "length": 2}},
+                        {"appendDimension": {"sheetId": 123, "dimension": "COLUMNS", "length": 3}},
+                    ]
+                },
+            )
+            update_calls = [
+                call for call in fake_client.post_calls if call["url"].endswith("/values:batchUpdate")
+            ]
+            self.assertEqual(len(update_calls), 1)
+            update = update_calls[0]["payload"]["data"][0]
+            self.assertEqual(update["range"], "'Assessments'!A1:D3")
+            self.assertEqual(
+                update["values"],
+                [
+                    ["data", "description", "# of timepoints (collected)", "collection tool"],
+                    ["MADRS", "depression rating", 2, "REDCap (IRB: 58807)"],
+                    ["PHQ-8", "self-report depression scale", 1, "REDCap (IRB: 58807)"],
+                ],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

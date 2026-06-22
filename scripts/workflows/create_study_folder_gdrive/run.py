@@ -606,6 +606,7 @@ def upload_cleaned_data(
                         access_token=access_token,
                         http_client=sheets_client,
                         timeout=timeout,
+                        write_full_sheet_when_no_headers=True,
                     )
                     results.append(UploadedFile(plan.local_path, plan.relative_path, copied))
                 else:

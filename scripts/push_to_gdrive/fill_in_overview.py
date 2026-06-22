@@ -290,6 +290,47 @@ def ensure_row_capacity(
     )
 
 
+def ensure_grid_capacity(
+    spreadsheet_id: str,
+    sheet: SheetProperties,
+    *,
+    required_rows: int,
+    required_columns: int,
+    http_client: SheetsHttpClient,
+    headers: Mapping[str, str],
+    timeout: float,
+) -> None:
+    requests: list[dict[str, Any]] = []
+    if required_rows > sheet.row_count:
+        requests.append(
+            {
+                "appendDimension": {
+                    "sheetId": sheet.sheet_id,
+                    "dimension": "ROWS",
+                    "length": required_rows - sheet.row_count,
+                }
+            }
+        )
+    if required_columns > sheet.column_count:
+        requests.append(
+            {
+                "appendDimension": {
+                    "sheetId": sheet.sheet_id,
+                    "dimension": "COLUMNS",
+                    "length": required_columns - sheet.column_count,
+                }
+            }
+        )
+    if not requests:
+        return
+    http_client.post(
+        sheets_batch_update_url(spreadsheet_id),
+        json.dumps({"requests": requests}).encode("utf-8"),
+        headers,
+        timeout,
+    )
+
+
 def header_lookup(headers: list[str]) -> dict[str, int]:
     lookup: dict[str, int] = {}
     for index, header in enumerate(headers):
@@ -336,6 +377,20 @@ def build_value_updates(
     return updates, clear_ranges, skipped_columns, cell_count if updates else 0
 
 
+def build_full_sheet_update(source: OverviewSheet, target_sheet: str) -> tuple[dict[str, Any] | None, str | None, int, int, int]:
+    values = [source.headers, *source.rows]
+    values = [row for row in values if any(not is_blank(value) for value in row)]
+    if not values:
+        return None, None, 0, 0, 0
+    max_columns = max(len(row) for row in values)
+    padded_values = [list(row) + [""] * (max_columns - len(row)) for row in values]
+    row_count = len(padded_values)
+    range_name = f"{sheet_name_a1(target_sheet)}!A1:{column_letter(max_columns - 1)}{row_count}"
+    clear_range = f"{sheet_name_a1(target_sheet)}!A1:{column_letter(max_columns - 1)}"
+    cell_count = row_count * max_columns
+    return {"range": range_name, "values": padded_values}, clear_range, cell_count, row_count, max_columns
+
+
 def fill_in_overview(
     *,
     target: str | Path,
@@ -345,6 +400,7 @@ def fill_in_overview(
     timeout: float = 120.0,
     dry_run: bool = False,
     clear_existing: bool = True,
+    write_full_sheet_when_no_headers: bool = False,
 ) -> FillInOverviewResult:
     spreadsheet_id = resolve_spreadsheet_id(target)
     overview_path = validate_overview_file(overview_file)
@@ -380,6 +436,30 @@ def fill_in_overview(
             headers=headers,
             timeout=timeout,
         )
+        if write_full_sheet_when_no_headers and not any(normalize_key(header) for header in target_headers):
+            update, clear_range, cell_count, row_count, column_count = build_full_sheet_update(
+                source,
+                target_properties.title,
+            )
+            if update is None:
+                continue
+            updated_tabs.append(target_properties.title)
+            planned_ranges.append(update["range"])
+            updated_cell_count += cell_count
+            all_updates.append(update)
+            if clear_range:
+                all_clear_ranges.append(clear_range)
+            if not dry_run:
+                ensure_grid_capacity(
+                    spreadsheet_id,
+                    target_properties,
+                    required_rows=row_count,
+                    required_columns=column_count,
+                    http_client=client,
+                    headers=headers,
+                    timeout=timeout,
+                )
+            continue
         updates, clear_ranges, missing_columns, cell_count = build_value_updates(
             source,
             target_properties.title,
