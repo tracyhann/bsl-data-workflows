@@ -260,6 +260,102 @@ def load_target_headers(
     return [str(value or "").strip() for value in values[0]]
 
 
+def source_sheet_titles(source_sheets: list[OverviewSheet]) -> list[str]:
+    titles: list[str] = []
+    seen: set[str] = set()
+    for index, source in enumerate(source_sheets, start=1):
+        title = str(source.title or "").strip() or f"sheet-{index}"
+        if normalize_key(title) in seen:
+            title = f"{title}-{index}"
+        seen.add(normalize_key(title))
+        titles.append(title)
+    return titles
+
+
+def sync_template_tab_to_source_sheets_for_workbook(
+    spreadsheet_id: str,
+    *,
+    target_sheets: dict[str, SheetProperties],
+    source_sheets: list[OverviewSheet],
+    http_client: SheetsHttpClient,
+    headers: Mapping[str, str],
+    timeout: float,
+    dry_run: bool,
+    template_tab_name: str = "template",
+) -> dict[str, SheetProperties]:
+    if not source_sheets:
+        return target_sheets
+    template = target_sheets.get(normalize_key(template_tab_name))
+    if template is None:
+        return target_sheets
+
+    titles = source_sheet_titles(source_sheets)
+    existing_ids = {sheet.sheet_id for sheet in target_sheets.values()}
+    next_sheet_id = max(existing_ids or {template.sheet_id}) + 1
+    requests: list[dict[str, Any]] = []
+
+    first_title = titles[0]
+    if normalize_key(template.title) != normalize_key(first_title):
+        requests.append(
+            {
+                "updateSheetProperties": {
+                    "properties": {"sheetId": template.sheet_id, "title": first_title},
+                    "fields": "title",
+                }
+            }
+        )
+
+    synthetic_sheets = dict(target_sheets)
+    synthetic_sheets.pop(normalize_key(template.title), None)
+    synthetic_sheets[normalize_key(first_title)] = SheetProperties(
+        sheet_id=template.sheet_id,
+        title=first_title,
+        row_count=template.row_count,
+        column_count=template.column_count,
+    )
+
+    for insert_index, title in enumerate(titles[1:], start=1):
+        while next_sheet_id in existing_ids:
+            next_sheet_id += 1
+        new_sheet_id = next_sheet_id
+        existing_ids.add(new_sheet_id)
+        next_sheet_id += 1
+        requests.append(
+            {
+                "duplicateSheet": {
+                    "sourceSheetId": template.sheet_id,
+                    "newSheetId": new_sheet_id,
+                    "newSheetName": title,
+                    "insertSheetIndex": insert_index,
+                }
+            }
+        )
+        synthetic_sheets[normalize_key(title)] = SheetProperties(
+            sheet_id=new_sheet_id,
+            title=title,
+            row_count=template.row_count,
+            column_count=template.column_count,
+        )
+
+    if not requests:
+        return target_sheets
+    if dry_run:
+        return synthetic_sheets
+
+    http_client.post(
+        sheets_batch_update_url(spreadsheet_id),
+        json.dumps({"requests": requests}).encode("utf-8"),
+        headers,
+        timeout,
+    )
+    return load_sheet_properties(
+        spreadsheet_id,
+        http_client=http_client,
+        headers=headers,
+        timeout=timeout,
+    )
+
+
 def ensure_row_capacity(
     spreadsheet_id: str,
     sheet: SheetProperties,
@@ -401,6 +497,7 @@ def fill_in_overview(
     dry_run: bool = False,
     clear_existing: bool = True,
     write_full_sheet_when_no_headers: bool = False,
+    sync_template_tab_to_source_sheets: bool = False,
 ) -> FillInOverviewResult:
     spreadsheet_id = resolve_spreadsheet_id(target)
     overview_path = validate_overview_file(overview_file)
@@ -415,6 +512,16 @@ def fill_in_overview(
         headers=headers,
         timeout=timeout,
     )
+    if sync_template_tab_to_source_sheets:
+        target_sheets = sync_template_tab_to_source_sheets_for_workbook(
+            spreadsheet_id,
+            target_sheets=target_sheets,
+            source_sheets=source_sheets,
+            http_client=client,
+            headers=headers,
+            timeout=timeout,
+            dry_run=dry_run,
+        )
 
     updated_tabs: list[str] = []
     skipped_tabs: list[str] = []
@@ -542,6 +649,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not clear matched target columns before writing new overview values.",
     )
+    parser.add_argument(
+        "--write-full-sheet-when-no-headers",
+        action="store_true",
+        help="If a target tab has no headers, write the complete local sheet from A1.",
+    )
+    parser.add_argument(
+        "--sync-template-tab-to-source-sheets",
+        action="store_true",
+        help=(
+            "If the target has one BLANK-template tab named template, rename/duplicate "
+            "it to match the local workbook sheet names before writing."
+        ),
+    )
     return parser
 
 
@@ -554,6 +674,8 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         dry_run=args.dry_run,
         clear_existing=not args.no_clear_existing,
+        write_full_sheet_when_no_headers=args.write_full_sheet_when_no_headers,
+        sync_template_tab_to_source_sheets=args.sync_template_tab_to_source_sheets,
     )
     print(
         json.dumps(

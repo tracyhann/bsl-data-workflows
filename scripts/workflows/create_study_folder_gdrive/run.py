@@ -607,6 +607,7 @@ def upload_cleaned_data(
                         http_client=sheets_client,
                         timeout=timeout,
                         write_full_sheet_when_no_headers=True,
+                        sync_template_tab_to_source_sheets=plan.template_name == BLANK_TEMPLATE_NAME,
                     )
                     results.append(UploadedFile(plan.local_path, plan.relative_path, copied))
                 else:

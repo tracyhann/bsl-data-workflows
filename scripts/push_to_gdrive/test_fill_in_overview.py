@@ -45,7 +45,48 @@ class FakeSheetsHttpClient:
                 "timeout": timeout,
             }
         )
+        if url.endswith(":batchUpdate"):
+            self.apply_batch_update(payload)
         return SheetsApiResponse(status_code=200, payload={}, raw_text="{}")
+
+    def apply_batch_update(self, payload):
+        for request in payload.get("requests", []):
+            if "updateSheetProperties" in request:
+                properties = request["updateSheetProperties"]["properties"]
+                sheet = self.sheet_by_id(properties["sheetId"])
+                old_title = sheet["properties"]["title"]
+                new_title = properties["title"]
+                sheet["properties"]["title"] = new_title
+                self.headers_by_sheet[new_title] = self.headers_by_sheet.pop(old_title, [])
+            elif "duplicateSheet" in request:
+                duplicate = request["duplicateSheet"]
+                source_sheet = self.sheet_by_id(duplicate["sourceSheetId"])
+                source_props = source_sheet["properties"]
+                new_sheet = {
+                    "properties": {
+                        "sheetId": duplicate["newSheetId"],
+                        "title": duplicate["newSheetName"],
+                        "gridProperties": dict(source_props.get("gridProperties", {})),
+                    }
+                }
+                self.metadata["sheets"].append(new_sheet)
+                self.headers_by_sheet[duplicate["newSheetName"]] = list(
+                    self.headers_by_sheet.get(source_props["title"], [])
+                )
+            elif "appendDimension" in request:
+                append = request["appendDimension"]
+                sheet = self.sheet_by_id(append["sheetId"])
+                grid = sheet["properties"].setdefault("gridProperties", {})
+                if append["dimension"] == "ROWS":
+                    grid["rowCount"] = grid.get("rowCount", 0) + append["length"]
+                elif append["dimension"] == "COLUMNS":
+                    grid["columnCount"] = grid.get("columnCount", 0) + append["length"]
+
+    def sheet_by_id(self, sheet_id):
+        for sheet in self.metadata.get("sheets", []):
+            if sheet.get("properties", {}).get("sheetId") == sheet_id:
+                return sheet
+        raise KeyError(sheet_id)
 
 
 def make_overview(path: Path) -> None:
@@ -63,6 +104,21 @@ def make_overview(path: Path) -> None:
     worksheet.append(["MADRS", "depression rating", 2, "REDCap (IRB: 58807)"])
     worksheet.append(["PHQ-8", "self-report depression scale", 1, "REDCap (IRB: 58807)"])
     workbook.create_sheet("neuroimaging").append(["data", "description"])
+    workbook.save(path)
+
+
+def make_dictionary(path: Path) -> None:
+    workbook = Workbook()
+    subject = workbook.active
+    subject.title = "subject_id"
+    subject.append(["IRB", "subid"])
+    subject.append(["53879", "s001"])
+    event = workbook.create_sheet("event")
+    event.append(["arm", "visit"])
+    event.append(["1", "V1"])
+    instrument = workbook.create_sheet("instrument")
+    instrument.append(["instrument", "instrument_label"])
+    instrument.append(["ybocs2_7389", "YBOCS2"])
     workbook.save(path)
 
 
@@ -251,6 +307,77 @@ class FillInOverviewTests(unittest.TestCase):
                     ["MADRS", "depression rating", 2, "REDCap (IRB: 58807)"],
                     ["PHQ-8", "self-report depression scale", 1, "REDCap (IRB: 58807)"],
                 ],
+            )
+
+    def test_can_rename_and_duplicate_blank_template_tab_for_multisheet_workbook(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dictionary = Path(tmpdir) / "dictionary.xlsx"
+            make_dictionary(dictionary)
+            fake_client = FakeSheetsHttpClient(
+                metadata={
+                    "sheets": [
+                        {
+                            "properties": {
+                                "sheetId": 123,
+                                "title": "template",
+                                "gridProperties": {"rowCount": 1, "columnCount": 1},
+                            }
+                        }
+                    ]
+                },
+                headers_by_sheet={"template": []},
+            )
+
+            result = fill_in_overview(
+                target="1MCjkVtR1lOJol8f95sK_W7bYdm8Bz1BkZbwJy410sYQ",
+                overview_file=dictionary,
+                access_token="token",
+                http_client=fake_client,
+                write_full_sheet_when_no_headers=True,
+                sync_template_tab_to_source_sheets=True,
+            )
+
+            self.assertEqual(result.updated_tabs, ["subject_id", "event", "instrument"])
+            tab_prep = fake_client.post_calls[0]["payload"]["requests"]
+            self.assertEqual(
+                tab_prep,
+                [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {"sheetId": 123, "title": "subject_id"},
+                            "fields": "title",
+                        }
+                    },
+                    {
+                        "duplicateSheet": {
+                            "sourceSheetId": 123,
+                            "newSheetId": 124,
+                            "newSheetName": "event",
+                            "insertSheetIndex": 1,
+                        }
+                    },
+                    {
+                        "duplicateSheet": {
+                            "sourceSheetId": 123,
+                            "newSheetId": 125,
+                            "newSheetName": "instrument",
+                            "insertSheetIndex": 2,
+                        }
+                    },
+                ],
+            )
+            update_calls = [
+                call for call in fake_client.post_calls if call["url"].endswith("/values:batchUpdate")
+            ]
+            ranges = {
+                update["range"]: update["values"]
+                for update in update_calls[0]["payload"]["data"]
+            }
+            self.assertEqual(ranges["'subject_id'!A1:B2"], [["IRB", "subid"], ["53879", "s001"]])
+            self.assertEqual(ranges["'event'!A1:B2"], [["arm", "visit"], ["1", "V1"]])
+            self.assertEqual(
+                ranges["'instrument'!A1:B2"],
+                [["instrument", "instrument_label"], ["ybocs2_7389", "YBOCS2"]],
             )
 
 
