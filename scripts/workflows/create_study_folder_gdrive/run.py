@@ -46,7 +46,14 @@ DRIVE_API_ROOT = "https://www.googleapis.com/drive/v3/files"
 DRIVE_UPLOAD_ROOT = "https://www.googleapis.com/upload/drive/v3/files"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
-REDCAP_TEMPLATE_NAME = "REDCap_INSTRUMENTS"
+REDCAP_TEMPLATE_NAME = "REDCap_INSTRUMENT"
+REDCAP_TEMPLATE_ALIASES = (
+    REDCAP_TEMPLATE_NAME,
+    "REDCap_INSTRUMENTS",
+    "REDCap_Instrument",
+    "REDCap Instruments",
+    "REDCap Instrument",
+)
 BLANK_TEMPLATE_NAME = "BLANK"
 REDCAP_INSTRUMENT_SHEETS = {
     "raw",
@@ -524,10 +531,16 @@ def plan_cleaned_uploads(study_folder: str | Path, cleaned_data_dir: str | Path 
     return plans
 
 
+def template_name_candidates(template_name: str) -> tuple[str, ...]:
+    if normalize_name(template_name) in {normalize_name(name) for name in REDCAP_TEMPLATE_ALIASES}:
+        return REDCAP_TEMPLATE_ALIASES
+    return (template_name,)
+
+
 def find_template_by_name(template_folder_children: list[DriveFile], template_name: str) -> DriveFile | None:
-    target = normalize_name(template_name)
+    targets = {normalize_name(name) for name in template_name_candidates(template_name)}
     for child in template_folder_children:
-        if normalize_name(child.name) == target:
+        if normalize_name(child.name) in targets:
             return child
     return None
 
@@ -879,7 +892,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overview-path", type=Path, help="Local overview workbook path.")
     parser.add_argument("--cleaned-data-folder-id", help="Google Drive folder id/link for cleaned data uploads.")
     parser.add_argument("--cleaned-data-dir", type=Path, help="Local cleaned data directory.")
-    parser.add_argument("--templates-folder-id", help="Google Drive folder id/link containing REDCap_INSTRUMENTS and BLANK templates.")
+    parser.add_argument("--templates-folder-id", help="Google Drive folder id/link containing REDCap_INSTRUMENT and BLANK templates.")
     parser.add_argument("--data-map-destination", help="Google Sheet URL/id/path for data map destination.")
     parser.add_argument("--data-map-dir", type=Path, help="Local data-map directory.")
     parser.add_argument("--access-token", help="Google OAuth token. Defaults to env/gcloud lookup.")

@@ -41,7 +41,7 @@ The Google Drive template folder should include:
 - `Overview/STUDY_IRB`
 - `Data (internal/approved-access)/No-PHI Data (internal/approved-access)/blank_templates/`
 - `Data Map (internal/approved-access)/IRB-data-map`
-- template sheets named `REDCap_INSTRUMENTS` and `BLANK` inside `blank_templates`
+- template sheets named `REDCap_INSTRUMENT` and `BLANK` inside `blank_templates`
 
 During initialization, filenames and folder names replace:
 
@@ -126,7 +126,7 @@ python3 scripts/workflows/create_study_folder_gdrive/run.py \
 Template choice:
 
 - workbooks with `raw`, `raw_labels`, `cleaned`, `timepoint_dictionary`,
-  `column_variable_dictionary`, and `excluded_rows` use `REDCap_INSTRUMENTS`
+  `column_variable_dictionary`, and `excluded_rows` use `REDCap_INSTRUMENT`
 - other `.xlsx`, `.xlsm`, and `.csv` files use `BLANK`
 - non-spreadsheet files are uploaded directly
 

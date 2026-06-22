@@ -7,6 +7,7 @@ from openpyxl import Workbook, load_workbook
 from scripts.workflows.create_study_folder_gdrive.run import (
     DriveFile,
     copy_template_tree,
+    find_template_by_name,
     find_drive_path,
     is_redcap_instrument_workbook,
     plan_cleaned_uploads,
@@ -190,10 +191,21 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             planned = plan_cleaned_uploads(study)
 
             by_name = {item.local_path.name: item for item in planned}
-            self.assertEqual(by_name["53879-madrs.xlsx"].template_name, "REDCap_INSTRUMENTS")
+            self.assertEqual(by_name["53879-madrs.xlsx"].template_name, "REDCap_INSTRUMENT")
             self.assertEqual(by_name["53879-madrs.xlsx"].relative_parent, Path("assessments"))
             self.assertEqual(by_name["subject_timepoints.xlsx"].template_name, "BLANK")
             self.assertEqual(by_name["subject_timepoints.xlsx"].relative_parent, Path("subjects"))
+
+    def test_redcap_template_lookup_uses_actual_template_name_and_legacy_aliases(self):
+        template = DriveFile(
+            id="redcap_template",
+            name="REDCap_INSTRUMENT",
+            mime_type="application/vnd.google-apps.spreadsheet",
+        )
+
+        self.assertEqual(find_template_by_name([template], "REDCap_INSTRUMENT"), template)
+        self.assertEqual(find_template_by_name([template], "REDCap_INSTRUMENTS"), template)
+        self.assertEqual(find_template_by_name([template], "REDCap Instrument"), template)
 
     def test_redcap_instrument_detection_requires_self_contained_sheet_set(self):
         with tempfile.TemporaryDirectory() as tmpdir:
