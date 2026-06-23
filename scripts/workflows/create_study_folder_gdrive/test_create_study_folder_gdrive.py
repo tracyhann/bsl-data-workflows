@@ -404,6 +404,36 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             self.assertEqual(rows[2][2], "https://docs.google.com/spreadsheets/d/madrs/edit")
             self.assertIsNone(rows[3][2])
 
+    def test_rewrites_data_map_locations_from_cleaned_upload_relative_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "data-map"
+            output_dir = Path(tmpdir) / "rewritten"
+            source_dir.mkdir()
+            workbook = Workbook()
+            worksheet = workbook.active
+            worksheet.title = "data_map"
+            worksheet.append(["stage", "description", "location"])
+            worksheet.append(
+                [
+                    "cleaned/processed",
+                    "MADRS",
+                    "./data/cleaned/assessments/53879-madrs.xlsx",
+                ]
+            )
+            workbook.save(source_dir / "assessments-data-map.xlsx")
+
+            rewritten = rewrite_data_map_locations(
+                source_dir,
+                output_dir,
+                {
+                    "assessments/53879-madrs.xlsx": "https://docs.google.com/spreadsheets/d/madrs/edit"
+                },
+            )
+
+            result = load_workbook(rewritten[0], data_only=True)
+            rows = list(result.active.iter_rows(values_only=True))
+            self.assertEqual(rows[1][2], "https://docs.google.com/spreadsheets/d/madrs/edit")
+
 
 if __name__ == "__main__":
     unittest.main()

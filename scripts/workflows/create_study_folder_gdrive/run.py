@@ -796,7 +796,11 @@ def clean_relative_location(value: object) -> str:
     text = str(value or "").strip()
     if text.startswith("./"):
         text = text[2:]
-    return normalize_path_key(text)
+    normalized = normalize_path_key(text)
+    cleaned_prefix = "data/cleaned/"
+    if normalized.startswith(cleaned_prefix):
+        normalized = normalized[len(cleaned_prefix) :]
+    return normalized
 
 
 def rewrite_data_map_locations(
