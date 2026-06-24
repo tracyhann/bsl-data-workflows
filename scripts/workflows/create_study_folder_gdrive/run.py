@@ -798,8 +798,8 @@ def clean_relative_location(value: object) -> str:
         text = text[2:]
     normalized = normalize_path_key(text)
     cleaned_prefix = "data/cleaned/"
-    if normalized.startswith(cleaned_prefix):
-        normalized = normalized[len(cleaned_prefix) :]
+    if cleaned_prefix in normalized:
+        normalized = normalized.split(cleaned_prefix, 1)[1]
     return normalized
 
 
@@ -833,6 +833,95 @@ def rewrite_data_map_locations(
         workbook.save(output_path)
         rewritten_paths.append(output_path)
     return rewritten_paths
+
+
+SUBJECT_TIMEPOINT_SOURCE_COLUMNS = {
+    normalize_name("earliest_date_source"),
+    normalize_name("latest_date_source"),
+}
+
+
+def rewrite_subject_timepoint_source_locations(
+    source_path: str | Path,
+    output_path: str | Path,
+    uploaded_locations: Mapping[str, str],
+) -> Path:
+    source_path = Path(source_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = load_workbook(source_path)
+    upload_lookup = {clean_relative_location(key): value for key, value in uploaded_locations.items()}
+
+    for worksheet in workbook.worksheets:
+        headers = [str(cell.value or "").strip() for cell in worksheet[1]]
+        source_indexes = [
+            index + 1
+            for index, header in enumerate(headers)
+            if normalize_name(header) in SUBJECT_TIMEPOINT_SOURCE_COLUMNS
+        ]
+        if not source_indexes:
+            continue
+        for row_index in range(2, worksheet.max_row + 1):
+            for column_index in source_indexes:
+                original = worksheet.cell(row=row_index, column=column_index).value
+                normalized = clean_relative_location(original)
+                if not normalized:
+                    continue
+                worksheet.cell(row=row_index, column=column_index).value = upload_lookup.get(normalized, "")
+
+    workbook.save(output_path)
+    return output_path
+
+
+def uploaded_locations_from_results(upload_results: list[UploadedFile]) -> dict[str, str]:
+    return {
+        result.relative_path.as_posix(): result.drive_file.web_url or result.drive_file.id
+        for result in upload_results
+        if result.ok and result.drive_file is not None
+    }
+
+
+def update_subject_timepoints_source_links(
+    *,
+    study_folder: Path,
+    upload_results: list[UploadedFile],
+    access_token: str,
+    sheets_client: SheetsHttpClient | None,
+    timeout: float,
+) -> Path | None:
+    uploaded_locations = uploaded_locations_from_results(upload_results)
+    if not uploaded_locations:
+        return None
+
+    subject_result = next(
+        (
+            result
+            for result in upload_results
+            if result.ok
+            and result.drive_file is not None
+            and result.relative_path.as_posix() == "subjects/subject_timepoints.xlsx"
+        ),
+        None,
+    )
+    if subject_result is None:
+        return None
+
+    rewritten_path = latest_history_dir(study_folder) / "gdrive_subject_timepoints" / "subject_timepoints.xlsx"
+    rewrite_subject_timepoint_source_locations(
+        subject_result.local_path,
+        rewritten_path,
+        uploaded_locations,
+    )
+    fill_in_overview(
+        target=subject_result.drive_file.id,
+        overview_file=rewritten_path,
+        access_token=access_token,
+        http_client=sheets_client,
+        timeout=timeout,
+        write_full_sheet_when_no_headers=True,
+        sync_template_tab_to_source_sheets=True,
+    )
+    return rewritten_path
 
 
 def upload_extra_local_folders(
@@ -1049,14 +1138,27 @@ def run_workflow(
             )
             if extra_uploads:
                 state.upload_results.extend(extra_uploads)
+        if existing_file_policy != "skip":
+            rewritten_subject_timepoints = update_subject_timepoints_source_links(
+                study_folder=study_folder,
+                upload_results=state.upload_results,
+                access_token=token,
+                sheets_client=sheets_client,
+                timeout=timeout,
+            )
+            if rewritten_subject_timepoints is not None:
+                append_log(
+                    study_folder,
+                    "Google Drive Upload",
+                    [
+                        "## Subject Timepoints Source Links",
+                        f"rewritten source links: {rewritten_subject_timepoints}",
+                    ],
+                )
 
     if stage in {"all", "data-map"}:
         local_data_map_dir = Path(data_map_dir) if data_map_dir else default_data_map_dir(study_folder)
-        uploaded_locations = {
-            result.relative_path.as_posix(): result.drive_file.web_url or result.drive_file.id
-            for result in state.upload_results
-            if result.ok and result.drive_file is not None
-        }
+        uploaded_locations = uploaded_locations_from_results(state.upload_results)
         if uploaded_locations:
             rewritten_dir = latest_history_dir(study_folder) / "gdrive_data_map"
             rewrite_data_map_locations(local_data_map_dir, rewritten_dir, uploaded_locations)

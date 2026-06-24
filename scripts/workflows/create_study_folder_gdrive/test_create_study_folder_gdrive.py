@@ -7,6 +7,7 @@ from openpyxl import Workbook, load_workbook
 
 from scripts.workflows.create_study_folder_gdrive.run import (
     DriveFile,
+    UploadedFile,
     copy_template_tree,
     find_template_by_name,
     find_drive_path,
@@ -14,6 +15,8 @@ from scripts.workflows.create_study_folder_gdrive.run import (
     plan_cleaned_uploads,
     replace_placeholders,
     rewrite_data_map_locations,
+    rewrite_subject_timepoint_source_locations,
+    update_subject_timepoints_source_links,
     upload_cleaned_data,
 )
 
@@ -433,6 +436,148 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             result = load_workbook(rewritten[0], data_only=True)
             rows = list(result.active.iter_rows(values_only=True))
             self.assertEqual(rows[1][2], "https://docs.google.com/spreadsheets/d/madrs/edit")
+
+    def test_rewrites_subject_timepoint_source_paths_to_uploaded_drive_links(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "subject_timepoints.xlsx"
+            output_path = Path(tmpdir) / "rewritten" / "subject_timepoints.xlsx"
+            workbook = Workbook()
+            worksheet = workbook.active
+            worksheet.title = "subject_timepoints"
+            worksheet.append(
+                [
+                    "IRB",
+                    "subid",
+                    "arm",
+                    "visit",
+                    "earliest_entry_date",
+                    "earliest_date_source",
+                    "latest_entry_date",
+                    "latest_date_source",
+                    "span",
+                    "values",
+                ]
+            )
+            worksheet.append(
+                [
+                    "53879",
+                    "s001",
+                    "1",
+                    "V2",
+                    "2021-01-01",
+                    "studies/example/data/cleaned/assessments/53879-madrs.xlsx",
+                    "2021-01-03",
+                    "/tmp/example/data/cleaned/neuroimaging/53879-eeg.xlsx",
+                    2,
+                    "2021-01-01; 2021-01-03",
+                ]
+            )
+            worksheet.append(
+                [
+                    "53879",
+                    "s002",
+                    "1",
+                    "V2",
+                    "2021-01-01",
+                    "studies/example/data/cleaned/assessments/missing.xlsx",
+                    "2021-01-03",
+                    "",
+                    2,
+                    "2021-01-01; 2021-01-03",
+                ]
+            )
+            workbook.save(source_path)
+
+            rewritten = rewrite_subject_timepoint_source_locations(
+                source_path,
+                output_path,
+                {
+                    "assessments/53879-madrs.xlsx": "https://docs.google.com/spreadsheets/d/madrs/edit",
+                    "neuroimaging/53879-eeg.xlsx": "https://docs.google.com/spreadsheets/d/eeg/edit",
+                },
+            )
+
+            result = load_workbook(rewritten, data_only=True)
+            rows = list(result["subject_timepoints"].iter_rows(values_only=True))
+            self.assertEqual(rows[1][5], "https://docs.google.com/spreadsheets/d/madrs/edit")
+            self.assertEqual(rows[1][7], "https://docs.google.com/spreadsheets/d/eeg/edit")
+            self.assertIsNone(rows[2][5])
+
+    def test_updates_uploaded_subject_timepoints_google_sheet_with_drive_source_links(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            study = Path(tmpdir) / "study"
+            subject_timepoints = study / "data" / "cleaned" / "subjects" / "subject_timepoints.xlsx"
+            subject_timepoints.parent.mkdir(parents=True)
+            workbook = Workbook()
+            worksheet = workbook.active
+            worksheet.title = "subject_timepoints"
+            worksheet.append(
+                [
+                    "IRB",
+                    "subid",
+                    "arm",
+                    "visit",
+                    "earliest_entry_date",
+                    "earliest_date_source",
+                    "latest_entry_date",
+                    "latest_date_source",
+                    "span",
+                    "values",
+                ]
+            )
+            worksheet.append(
+                [
+                    "53879",
+                    "s001",
+                    "1",
+                    "V2",
+                    "2021-01-01",
+                    str(study / "data" / "cleaned" / "assessments" / "53879-madrs.xlsx"),
+                    "2021-01-03",
+                    "",
+                    2,
+                    "2021-01-01; 2021-01-03",
+                ]
+            )
+            workbook.save(subject_timepoints)
+            upload_results = [
+                UploadedFile(
+                    local_path=study / "data" / "cleaned" / "assessments" / "53879-madrs.xlsx",
+                    relative_path=Path("assessments/53879-madrs.xlsx"),
+                    drive_file=DriveFile(
+                        id="madrs_sheet",
+                        name="53879-madrs",
+                        mime_type="application/vnd.google-apps.spreadsheet",
+                        web_url="https://docs.google.com/spreadsheets/d/madrs/edit",
+                    ),
+                ),
+                UploadedFile(
+                    local_path=subject_timepoints,
+                    relative_path=Path("subjects/subject_timepoints.xlsx"),
+                    drive_file=DriveFile(
+                        id="subject_timepoints_sheet",
+                        name="subject_timepoints",
+                        mime_type="application/vnd.google-apps.spreadsheet",
+                        web_url="https://docs.google.com/spreadsheets/d/subject_timepoints/edit",
+                    ),
+                ),
+            ]
+
+            with patch("scripts.workflows.create_study_folder_gdrive.run.fill_in_overview") as fill:
+                rewritten = update_subject_timepoints_source_links(
+                    study_folder=study,
+                    upload_results=upload_results,
+                    access_token="token",
+                    sheets_client=None,
+                    timeout=1,
+                )
+
+            self.assertIsNotNone(rewritten)
+            result = load_workbook(rewritten, data_only=True)
+            rows = list(result["subject_timepoints"].iter_rows(values_only=True))
+            self.assertEqual(rows[1][5], "https://docs.google.com/spreadsheets/d/madrs/edit")
+            fill.assert_called_once()
+            self.assertEqual(fill.call_args.kwargs["target"], "subject_timepoints_sheet")
 
 
 if __name__ == "__main__":
