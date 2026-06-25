@@ -331,6 +331,7 @@ class GoogleDriveClient:
 class TemplateCopyResult:
     root: DriveFile
     files_by_relative_path: dict[str, DriveFile]
+    copied_permission_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -488,7 +489,7 @@ def permission_is_inherited(permission: Mapping[str, Any]) -> bool:
 
 
 def copyable_permission_body(permission: Mapping[str, Any]) -> dict[str, Any] | None:
-    if permission.get("deleted") or permission_is_inherited(permission):
+    if permission.get("deleted"):
         return None
     role = str(permission.get("role", "")).lower()
     permission_type = str(permission.get("type", "")).lower()
@@ -560,8 +561,9 @@ def copy_template_tree(
         name=root_name,
         existing_file_policy=existing_file_policy,
     )
+    copied_permission_count = 0
     if copy_template_permissions_to_root:
-        copy_template_permissions(drive, template_folder_id, root_copy.id)
+        copied_permission_count = copy_template_permissions(drive, template_folder_id, root_copy.id)
     files_by_relative_path: dict[str, DriveFile] = {}
 
     def copy_children(source_folder_id: str, dest_folder: DriveFile, relative_parent: Path) -> None:
@@ -591,7 +593,11 @@ def copy_template_tree(
                 files_by_relative_path[relative_path.as_posix()] = copied_file
 
     copy_children(template_folder_id, root_copy, Path(""))
-    return TemplateCopyResult(root=root_copy, files_by_relative_path=files_by_relative_path)
+    return TemplateCopyResult(
+        root=root_copy,
+        files_by_relative_path=files_by_relative_path,
+        copied_permission_count=copied_permission_count,
+    )
 
 
 def latest_history_dir(study_folder: Path) -> Path:
@@ -1136,6 +1142,7 @@ def initialize_drive_folder(
             f"renamed by Study name: {study_name}",
             f"IRB: {irb}",
             f"copied template permissions: {copy_template_permissions_to_root}",
+            f"copied permission count: {result.copied_permission_count}",
         ],
     )
     return result

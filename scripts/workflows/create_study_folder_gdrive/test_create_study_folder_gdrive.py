@@ -243,6 +243,7 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
         )
 
         self.assertEqual(result.root.name, "OCD-TMS 53879 Template")
+        self.assertEqual(result.copied_permission_count, 3)
         copied_names = [copy_call[1] for copy_call in fake_drive.copied_files]
         self.assertIn("53879-meta", copied_names)
         self.assertIn("OCD-TMS_53879", copied_names)
@@ -271,6 +272,10 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
                     result.root.id,
                     {"type": "group", "role": "reader", "emailAddress": "readers@example.com"},
                 ),
+                (
+                    result.root.id,
+                    {"type": "user", "role": "writer", "emailAddress": "inherited@example.com"},
+                ),
             ],
         )
 
@@ -296,10 +301,13 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
 
         copied = copy_template_permissions(fake_drive, "template", "target")
 
-        self.assertEqual(copied, 1)
+        self.assertEqual(copied, 2)
         self.assertEqual(
             fake_drive.created_permissions,
-            [("target", {"type": "group", "role": "reader", "emailAddress": "readers@example.com"})],
+            [
+                ("target", {"type": "group", "role": "reader", "emailAddress": "readers@example.com"}),
+                ("target", {"type": "user", "role": "writer", "emailAddress": "inherited@example.com"}),
+            ],
         )
 
     def test_update_or_create_template_tree_reuses_existing_study_root(self):
