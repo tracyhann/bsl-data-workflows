@@ -296,6 +296,36 @@ class GoogleDriveClient:
             ).payload
         )
 
+    def list_permissions(self, file_id: str) -> list[dict[str, Any]]:
+        params = {
+            "supportsAllDrives": "true",
+            "fields": (
+                "permissions("
+                "id,type,emailAddress,domain,role,allowFileDiscovery,deleted,"
+                "permissionDetails(inherited)"
+                ")"
+            ),
+        }
+        url = f"{DRIVE_API_ROOT}/{file_id}/permissions?{urllib.parse.urlencode(params)}"
+        payload = self.http_client.get(url, self.headers, self.timeout).payload
+        return [dict(permission) for permission in payload.get("permissions", [])]
+
+    def create_permission(self, file_id: str, permission: Mapping[str, Any]) -> dict[str, Any]:
+        params = {
+            "supportsAllDrives": "true",
+            "sendNotificationEmail": "false",
+            "fields": "id,type,emailAddress,domain,role,allowFileDiscovery",
+        }
+        url = f"{DRIVE_API_ROOT}/{file_id}/permissions?{urllib.parse.urlencode(params)}"
+        return dict(
+            self.http_client.post(
+                url,
+                json.dumps(dict(permission)).encode("utf-8"),
+                self.headers,
+                self.timeout,
+            ).payload
+        )
+
 
 @dataclass(frozen=True)
 class TemplateCopyResult:
@@ -441,6 +471,69 @@ def find_or_create_drive_folder(
     return drive.create_folder(name, parent_id)
 
 
+def permission_key(permission: Mapping[str, Any]) -> tuple[str, str]:
+    permission_type = str(permission.get("type", "")).lower()
+    if permission_type in {"user", "group"}:
+        return permission_type, str(permission.get("emailAddress", "")).lower()
+    if permission_type == "domain":
+        return permission_type, str(permission.get("domain", "")).lower()
+    return permission_type, ""
+
+
+def permission_is_inherited(permission: Mapping[str, Any]) -> bool:
+    details = permission.get("permissionDetails")
+    if not isinstance(details, list) or not details:
+        return False
+    return all(bool(detail.get("inherited")) for detail in details if isinstance(detail, Mapping))
+
+
+def copyable_permission_body(permission: Mapping[str, Any]) -> dict[str, Any] | None:
+    if permission.get("deleted") or permission_is_inherited(permission):
+        return None
+    role = str(permission.get("role", "")).lower()
+    permission_type = str(permission.get("type", "")).lower()
+    if not role or role == "owner" or not permission_type:
+        return None
+
+    body: dict[str, Any] = {"type": permission_type, "role": role}
+    if permission_type in {"user", "group"}:
+        email = str(permission.get("emailAddress", "")).strip()
+        if not email:
+            return None
+        body["emailAddress"] = email
+    elif permission_type == "domain":
+        domain = str(permission.get("domain", "")).strip()
+        if not domain:
+            return None
+        body["domain"] = domain
+    elif permission_type != "anyone":
+        return None
+
+    if "allowFileDiscovery" in permission:
+        body["allowFileDiscovery"] = bool(permission.get("allowFileDiscovery"))
+    return body
+
+
+def copy_template_permissions(drive: Any, template_file_id: str, target_file_id: str) -> int:
+    existing_keys = {
+        permission_key(permission)
+        for permission in drive.list_permissions(target_file_id)
+        if permission_key(permission) != ("", "")
+    }
+    copied_count = 0
+    for source_permission in drive.list_permissions(template_file_id):
+        body = copyable_permission_body(source_permission)
+        if body is None:
+            continue
+        key = permission_key(body)
+        if not key[0] or key in existing_keys:
+            continue
+        drive.create_permission(target_file_id, body)
+        existing_keys.add(key)
+        copied_count += 1
+    return copied_count
+
+
 def irb_meta_path_candidates(irb_meta_path: str, *, study_name: str, irb: str) -> list[str]:
     resolved = replace_placeholders(irb_meta_path, study_name=study_name, irb=irb)
     candidates = [resolved]
@@ -457,6 +550,7 @@ def copy_template_tree(
     study_name: str,
     irb: str,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
+    copy_template_permissions_to_root: bool = True,
 ) -> TemplateCopyResult:
     template_root = drive.get_file(template_folder_id)
     root_name = replace_placeholders(template_root.name, study_name=study_name, irb=irb)
@@ -466,6 +560,8 @@ def copy_template_tree(
         name=root_name,
         existing_file_policy=existing_file_policy,
     )
+    if copy_template_permissions_to_root:
+        copy_template_permissions(drive, template_folder_id, root_copy.id)
     files_by_relative_path: dict[str, DriveFile] = {}
 
     def copy_children(source_folder_id: str, dest_folder: DriveFile, relative_parent: Path) -> None:
@@ -1006,6 +1102,7 @@ def initialize_drive_folder(
     irb_meta_path: str = "IRB-meta",
     timeout: float = 120.0,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
+    copy_template_permissions_to_root: bool = True,
 ) -> TemplateCopyResult:
     result = copy_template_tree(
         drive=drive,
@@ -1014,6 +1111,7 @@ def initialize_drive_folder(
         study_name=study_name,
         irb=irb,
         existing_file_policy=existing_file_policy,
+        copy_template_permissions_to_root=copy_template_permissions_to_root,
     )
     irb_meta = None
     for candidate in irb_meta_path_candidates(irb_meta_path, study_name=study_name, irb=irb):
@@ -1037,6 +1135,7 @@ def initialize_drive_folder(
             f"google drive folder initialized at: {result.root.web_url or result.root.id}",
             f"renamed by Study name: {study_name}",
             f"IRB: {irb}",
+            f"copied template permissions: {copy_template_permissions_to_root}",
         ],
     )
     return result
@@ -1062,6 +1161,7 @@ def run_workflow(
     access_token: str | None = None,
     timeout: float = 120.0,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
+    copy_template_permissions_to_root: bool = True,
 ) -> WorkflowState:
     study_folder = Path(study_folder)
     validate_existing_file_policy(existing_file_policy)
@@ -1086,6 +1186,7 @@ def run_workflow(
             irb_meta_path=irb_meta_path,
             timeout=timeout,
             existing_file_policy=existing_file_policy,
+            copy_template_permissions_to_root=copy_template_permissions_to_root,
         )
         state.initialized_root = copy_result.root
     elif initialized_folder_id:
@@ -1232,6 +1333,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Default updates existing files or creates missing files."
         ),
     )
+    parser.add_argument(
+        "--no-copy-template-permissions",
+        action="store_true",
+        help="Do not copy direct non-owner permissions from the template folder to the initialized study folder.",
+    )
     parser.add_argument("--access-token", help="Google OAuth token. Defaults to env/gcloud lookup.")
     parser.add_argument("--timeout", type=float, default=120.0, help="Google API timeout in seconds.")
     return parser
@@ -1258,6 +1364,7 @@ def main(argv: list[str] | None = None) -> int:
         access_token=args.access_token,
         timeout=args.timeout,
         existing_file_policy=args.existing_file_policy,
+        copy_template_permissions_to_root=not args.no_copy_template_permissions,
     )
     print(
         json.dumps(

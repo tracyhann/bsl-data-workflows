@@ -9,6 +9,7 @@ from scripts.workflows.create_study_folder_gdrive.run import (
     DriveFile,
     UploadedFile,
     copy_template_tree,
+    copy_template_permissions,
     find_template_by_name,
     find_drive_path,
     is_redcap_instrument_workbook,
@@ -105,6 +106,22 @@ class FakeDriveClient:
         self.uploaded_files = []
         self.updated_files = []
         self.trashed_files = []
+        self.permissions = {
+            "template": [
+                {"id": "owner", "type": "user", "emailAddress": "owner@example.com", "role": "owner"},
+                {"id": "writer", "type": "user", "emailAddress": "editor@example.com", "role": "writer"},
+                {"id": "reader", "type": "group", "emailAddress": "readers@example.com", "role": "reader"},
+                {
+                    "id": "inherited",
+                    "type": "user",
+                    "emailAddress": "inherited@example.com",
+                    "role": "writer",
+                    "permissionDetails": [{"inherited": True}],
+                },
+            ],
+            "dest": [],
+        }
+        self.created_permissions = []
 
     def list_children(self, folder_id):
         return [self.files[file_id] for file_id in self.children.get(folder_id, [])]
@@ -124,6 +141,7 @@ class FakeDriveClient:
         self.children[file_id] = []
         self.children.setdefault(parent_id, []).append(file_id)
         self.created_folders.append((name, parent_id))
+        self.permissions[file_id] = []
         return drive_file
 
     def copy_file(self, file_id, name, parent_id):
@@ -138,6 +156,7 @@ class FakeDriveClient:
         self.files[copy_id] = drive_file
         self.children.setdefault(parent_id, []).append(copy_id)
         self.copied_files.append((file_id, name, parent_id))
+        self.permissions[copy_id] = []
         return drive_file
 
     def upload_file(self, local_path, name, parent_id):
@@ -170,6 +189,15 @@ class FakeDriveClient:
         for children in self.children.values():
             if file_id in children:
                 children.remove(file_id)
+
+    def list_permissions(self, file_id):
+        return list(self.permissions.get(file_id, []))
+
+    def create_permission(self, file_id, permission):
+        created = {"id": f"permission_{len(self.created_permissions) + 1}", **permission}
+        self.permissions.setdefault(file_id, []).append(created)
+        self.created_permissions.append((file_id, permission))
+        return created
 
 
 def create_redcap_workbook(path: Path) -> None:
@@ -220,6 +248,59 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
         self.assertIn("OCD-TMS_53879", copied_names)
         self.assertEqual(result.files_by_relative_path["Overview/OCD-TMS_53879"].name, "OCD-TMS_53879")
         self.assertEqual(result.files_by_relative_path["53879-meta"].name, "53879-meta")
+
+    def test_copies_template_root_permissions_by_default(self):
+        fake_drive = FakeDriveClient()
+
+        result = copy_template_tree(
+            drive=fake_drive,
+            template_folder_id="template",
+            destination_parent_id="dest",
+            study_name="OCD-TMS",
+            irb="53879",
+        )
+
+        self.assertEqual(
+            fake_drive.created_permissions,
+            [
+                (
+                    result.root.id,
+                    {"type": "user", "role": "writer", "emailAddress": "editor@example.com"},
+                ),
+                (
+                    result.root.id,
+                    {"type": "group", "role": "reader", "emailAddress": "readers@example.com"},
+                ),
+            ],
+        )
+
+    def test_can_skip_template_root_permission_copy(self):
+        fake_drive = FakeDriveClient()
+
+        copy_template_tree(
+            drive=fake_drive,
+            template_folder_id="template",
+            destination_parent_id="dest",
+            study_name="OCD-TMS",
+            irb="53879",
+            copy_template_permissions_to_root=False,
+        )
+
+        self.assertEqual(fake_drive.created_permissions, [])
+
+    def test_does_not_duplicate_existing_template_root_permission(self):
+        fake_drive = FakeDriveClient()
+        fake_drive.permissions["target"] = [
+            {"id": "existing", "type": "user", "emailAddress": "editor@example.com", "role": "writer"}
+        ]
+
+        copied = copy_template_permissions(fake_drive, "template", "target")
+
+        self.assertEqual(copied, 1)
+        self.assertEqual(
+            fake_drive.created_permissions,
+            [("target", {"type": "group", "role": "reader", "emailAddress": "readers@example.com"})],
+        )
 
     def test_update_or_create_template_tree_reuses_existing_study_root(self):
         fake_drive = FakeDriveClient()
