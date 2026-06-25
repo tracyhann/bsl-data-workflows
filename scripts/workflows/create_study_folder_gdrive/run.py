@@ -841,6 +841,18 @@ SUBJECT_TIMEPOINT_SOURCE_COLUMNS = {
 }
 
 
+def rewrite_source_location_list(value: object, upload_lookup: Mapping[str, str]) -> str:
+    links: list[str] = []
+    for part in str(value or "").split(";"):
+        normalized = clean_relative_location(part)
+        if not normalized:
+            continue
+        link = upload_lookup.get(normalized)
+        if link:
+            links.append(link)
+    return "; ".join(links)
+
+
 def rewrite_subject_timepoint_source_locations(
     source_path: str | Path,
     output_path: str | Path,
@@ -864,10 +876,10 @@ def rewrite_subject_timepoint_source_locations(
         for row_index in range(2, worksheet.max_row + 1):
             for column_index in source_indexes:
                 original = worksheet.cell(row=row_index, column=column_index).value
-                normalized = clean_relative_location(original)
-                if not normalized:
+                if not str(original or "").strip():
                     continue
-                worksheet.cell(row=row_index, column=column_index).value = upload_lookup.get(normalized, "")
+                rewritten = rewrite_source_location_list(original, upload_lookup)
+                worksheet.cell(row=row_index, column=column_index).value = rewritten
 
     workbook.save(output_path)
     return output_path

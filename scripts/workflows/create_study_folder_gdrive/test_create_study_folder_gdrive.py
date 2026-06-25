@@ -465,7 +465,7 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
                     "1",
                     "V2",
                     "2021-01-01",
-                    "studies/example/data/cleaned/assessments/53879-madrs.xlsx",
+                    "studies/example/data/cleaned/assessments/53879-madrs.xlsx; /tmp/example/data/cleaned/treatments/53879-medication.xlsx",
                     "2021-01-03",
                     "/tmp/example/data/cleaned/neuroimaging/53879-eeg.xlsx",
                     2,
@@ -493,13 +493,17 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
                 output_path,
                 {
                     "assessments/53879-madrs.xlsx": "https://docs.google.com/spreadsheets/d/madrs/edit",
+                    "treatments/53879-medication.xlsx": "https://docs.google.com/spreadsheets/d/medication/edit",
                     "neuroimaging/53879-eeg.xlsx": "https://docs.google.com/spreadsheets/d/eeg/edit",
                 },
             )
 
             result = load_workbook(rewritten, data_only=True)
             rows = list(result["subject_timepoints"].iter_rows(values_only=True))
-            self.assertEqual(rows[1][5], "https://docs.google.com/spreadsheets/d/madrs/edit")
+            self.assertEqual(
+                rows[1][5],
+                "https://docs.google.com/spreadsheets/d/madrs/edit; https://docs.google.com/spreadsheets/d/medication/edit",
+            )
             self.assertEqual(rows[1][7], "https://docs.google.com/spreadsheets/d/eeg/edit")
             self.assertIsNone(rows[2][5])
 
