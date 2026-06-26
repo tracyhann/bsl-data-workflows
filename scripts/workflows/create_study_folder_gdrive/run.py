@@ -328,10 +328,25 @@ class GoogleDriveClient:
 
 
 @dataclass(frozen=True)
+class PermissionCopyResult:
+    copied_count: int = 0
+    errors: tuple[str, ...] = ()
+
+    @property
+    def error_count(self) -> int:
+        return len(self.errors)
+
+
+@dataclass(frozen=True)
 class TemplateCopyResult:
     root: DriveFile
     files_by_relative_path: dict[str, DriveFile]
     copied_permission_count: int = 0
+    permission_errors: tuple[str, ...] = ()
+
+    @property
+    def permission_error_count(self) -> int:
+        return len(self.permission_errors)
 
 
 @dataclass(frozen=True)
@@ -515,13 +530,14 @@ def copyable_permission_body(permission: Mapping[str, Any]) -> dict[str, Any] | 
     return body
 
 
-def copy_template_permissions(drive: Any, template_file_id: str, target_file_id: str) -> int:
+def copy_template_permissions(drive: Any, template_file_id: str, target_file_id: str) -> PermissionCopyResult:
     existing_keys = {
         permission_key(permission)
         for permission in drive.list_permissions(target_file_id)
         if permission_key(permission) != ("", "")
     }
     copied_count = 0
+    errors: list[str] = []
     for source_permission in drive.list_permissions(template_file_id):
         body = copyable_permission_body(source_permission)
         if body is None:
@@ -529,10 +545,15 @@ def copy_template_permissions(drive: Any, template_file_id: str, target_file_id:
         key = permission_key(body)
         if not key[0] or key in existing_keys:
             continue
-        drive.create_permission(target_file_id, body)
-        existing_keys.add(key)
-        copied_count += 1
-    return copied_count
+        try:
+            drive.create_permission(target_file_id, body)
+        except Exception as exc:
+            errors.append(f"{key[0]}:{key[1]} role={body.get('role')}: {exc}")
+            continue
+        else:
+            existing_keys.add(key)
+            copied_count += 1
+    return PermissionCopyResult(copied_count=copied_count, errors=tuple(errors))
 
 
 def irb_meta_path_candidates(irb_meta_path: str, *, study_name: str, irb: str) -> list[str]:
@@ -561,9 +582,9 @@ def copy_template_tree(
         name=root_name,
         existing_file_policy=existing_file_policy,
     )
-    copied_permission_count = 0
+    permission_copy_result = PermissionCopyResult()
     if copy_template_permissions_to_root:
-        copied_permission_count = copy_template_permissions(drive, template_folder_id, root_copy.id)
+        permission_copy_result = copy_template_permissions(drive, template_folder_id, root_copy.id)
     files_by_relative_path: dict[str, DriveFile] = {}
 
     def copy_children(source_folder_id: str, dest_folder: DriveFile, relative_parent: Path) -> None:
@@ -596,7 +617,8 @@ def copy_template_tree(
     return TemplateCopyResult(
         root=root_copy,
         files_by_relative_path=files_by_relative_path,
-        copied_permission_count=copied_permission_count,
+        copied_permission_count=permission_copy_result.copied_count,
+        permission_errors=permission_copy_result.errors,
     )
 
 
@@ -1143,6 +1165,8 @@ def initialize_drive_folder(
             f"IRB: {irb}",
             f"copied template permissions: {copy_template_permissions_to_root}",
             f"copied permission count: {result.copied_permission_count}",
+            f"permission copy errors: {result.permission_error_count}",
+            *[f"- {error}" for error in result.permission_errors],
         ],
     )
     return result

@@ -122,6 +122,7 @@ class FakeDriveClient:
             "dest": [],
         }
         self.created_permissions = []
+        self.rejected_permission_emails = set()
 
     def list_children(self, folder_id):
         return [self.files[file_id] for file_id in self.children.get(folder_id, [])]
@@ -194,6 +195,8 @@ class FakeDriveClient:
         return list(self.permissions.get(file_id, []))
 
     def create_permission(self, file_id, permission):
+        if permission.get("emailAddress") in self.rejected_permission_emails:
+            raise RuntimeError("teamDriveDomainUsersOnlyRestriction")
         created = {"id": f"permission_{len(self.created_permissions) + 1}", **permission}
         self.permissions.setdefault(file_id, []).append(created)
         self.created_permissions.append((file_id, permission))
@@ -301,7 +304,8 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
 
         copied = copy_template_permissions(fake_drive, "template", "target")
 
-        self.assertEqual(copied, 2)
+        self.assertEqual(copied.copied_count, 2)
+        self.assertEqual(copied.error_count, 0)
         self.assertEqual(
             fake_drive.created_permissions,
             [
@@ -309,6 +313,22 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
                 ("target", {"type": "user", "role": "writer", "emailAddress": "inherited@example.com"}),
             ],
         )
+
+    def test_permission_copy_continues_when_drive_rejects_permission(self):
+        fake_drive = FakeDriveClient()
+        fake_drive.rejected_permission_emails.add("inherited@example.com")
+
+        result = copy_template_tree(
+            drive=fake_drive,
+            template_folder_id="template",
+            destination_parent_id="dest",
+            study_name="OCD-TMS",
+            irb="53879",
+        )
+
+        self.assertEqual(result.copied_permission_count, 2)
+        self.assertEqual(result.permission_error_count, 1)
+        self.assertIn("teamDriveDomainUsersOnlyRestriction", result.permission_errors[0])
 
     def test_update_or_create_template_tree_reuses_existing_study_root(self):
         fake_drive = FakeDriveClient()
