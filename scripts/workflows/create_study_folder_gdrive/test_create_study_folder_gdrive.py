@@ -8,6 +8,8 @@ from openpyxl import Workbook, load_workbook
 from scripts.workflows.create_study_folder_gdrive.run import (
     DriveFile,
     UploadedFile,
+    GoogleDriveClient,
+    RefreshingSheetsHttpClient,
     copy_template_tree,
     copy_template_permissions,
     find_template_by_name,
@@ -203,6 +205,38 @@ class FakeDriveClient:
         return created
 
 
+class FakeDriveHttpClient:
+    def __init__(self):
+        self.get_headers = []
+
+    def get(self, url, headers, timeout):
+        self.get_headers.append(dict(headers))
+        return type(
+            "Response",
+            (),
+            {"payload": {"id": "file", "name": "File", "mimeType": "application/vnd.google-apps.folder"}},
+        )()
+
+    def post(self, url, body, headers, timeout):
+        return self.get(url, headers, timeout)
+
+    def patch(self, url, body, headers, timeout):
+        return self.get(url, headers, timeout)
+
+
+class FakeSheetsHttpClient:
+    def __init__(self):
+        self.get_headers = []
+
+    def get(self, url, headers, timeout):
+        self.get_headers.append(dict(headers))
+        return type("Response", (), {"payload": {}})()
+
+    def post(self, url, body, headers, timeout):
+        self.get_headers.append(dict(headers))
+        return type("Response", (), {"payload": {}})()
+
+
 def create_redcap_workbook(path: Path) -> None:
     workbook = Workbook()
     workbook.active.title = "raw"
@@ -224,6 +258,32 @@ def create_plain_workbook(path: Path) -> None:
 
 
 class CreateStudyFolderGDriveTests(unittest.TestCase):
+    def test_drive_client_refreshes_authorization_header_for_each_request(self):
+        tokens = iter(["fresh_1", "fresh_2"])
+        fake_http = FakeDriveHttpClient()
+        drive = GoogleDriveClient(
+            "stale",
+            http_client=fake_http,
+            token_provider=lambda: next(tokens),
+        )
+
+        drive.get_file("one")
+        drive.get_file("two")
+
+        self.assertEqual(fake_http.get_headers[0]["Authorization"], "Bearer fresh_1")
+        self.assertEqual(fake_http.get_headers[1]["Authorization"], "Bearer fresh_2")
+
+    def test_refreshing_sheets_client_refreshes_authorization_header_for_each_request(self):
+        tokens = iter(["sheet_1", "sheet_2"])
+        fake_http = FakeSheetsHttpClient()
+        client = RefreshingSheetsHttpClient(fake_http, lambda: next(tokens))
+
+        client.get("https://example.test/get", {"Authorization": "Bearer stale"}, 1)
+        client.post("https://example.test/post", b"{}", {"Authorization": "Bearer stale"}, 1)
+
+        self.assertEqual(fake_http.get_headers[0]["Authorization"], "Bearer sheet_1")
+        self.assertEqual(fake_http.get_headers[1]["Authorization"], "Bearer sheet_2")
+
     def test_replaces_study_and_irb_placeholders_case_sensitively(self):
         self.assertEqual(
             replace_placeholders("STUDY_IRB overview", study_name="OCD-TMS", irb="53879"),

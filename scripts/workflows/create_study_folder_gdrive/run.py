@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from openpyxl import Workbook, load_workbook
 
@@ -153,6 +153,23 @@ class UrllibDriveHttpClient:
         return _send_drive_request(request, timeout)
 
 
+class RefreshingSheetsHttpClient:
+    def __init__(self, wrapped: SheetsHttpClient, token_provider: Callable[[], str]) -> None:
+        self.wrapped = wrapped
+        self.token_provider = token_provider
+
+    def _headers(self, headers: Mapping[str, str]) -> dict[str, str]:
+        refreshed = dict(headers)
+        refreshed["Authorization"] = f"Bearer {self.token_provider()}"
+        return refreshed
+
+    def get(self, url: str, headers: Mapping[str, str], timeout: float) -> Any:
+        return self.wrapped.get(url, self._headers(headers), timeout)
+
+    def post(self, url: str, body: bytes, headers: Mapping[str, str], timeout: float) -> Any:
+        return self.wrapped.post(url, body, self._headers(headers), timeout)
+
+
 def _send_drive_request(request: urllib.request.Request, timeout: float) -> DriveResponse:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -171,7 +188,9 @@ class GoogleDriveClient:
         *,
         http_client: DriveHttpClient | None = None,
         timeout: float = 120.0,
+        token_provider: Callable[[], str] | None = None,
     ) -> None:
+        self.token_provider = token_provider
         self.headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json; charset=UTF-8",
@@ -180,7 +199,15 @@ class GoogleDriveClient:
         self.http_client = http_client or UrllibDriveHttpClient()
         self.timeout = timeout
 
+    def _refresh_authorization_headers(self) -> None:
+        if self.token_provider is None:
+            return
+        token = self.token_provider()
+        self.headers["Authorization"] = f"Bearer {token}"
+        self.upload_headers["Authorization"] = f"Bearer {token}"
+
     def get_file(self, file_id: str) -> DriveFile:
+        self._refresh_authorization_headers()
         url = (
             f"{DRIVE_API_ROOT}/{file_id}"
             "?supportsAllDrives=true&fields=id,name,mimeType,webViewLink"
@@ -188,6 +215,7 @@ class GoogleDriveClient:
         return drive_file_from_payload(self.http_client.get(url, self.headers, self.timeout).payload)
 
     def list_children(self, folder_id: str) -> list[DriveFile]:
+        self._refresh_authorization_headers()
         files: list[DriveFile] = []
         page_token: str | None = None
         while True:
@@ -209,6 +237,7 @@ class GoogleDriveClient:
         return files
 
     def create_folder(self, name: str, parent_id: str) -> DriveFile:
+        self._refresh_authorization_headers()
         payload = {
             "name": name,
             "mimeType": FOLDER_MIME_TYPE,
@@ -225,6 +254,7 @@ class GoogleDriveClient:
         )
 
     def copy_file(self, file_id: str, name: str, parent_id: str) -> DriveFile:
+        self._refresh_authorization_headers()
         payload = {"name": name, "parents": [parent_id]}
         url = (
             f"{DRIVE_API_ROOT}/{file_id}/copy"
@@ -240,6 +270,7 @@ class GoogleDriveClient:
         )
 
     def upload_file(self, local_path: Path, name: str, parent_id: str) -> DriveFile:
+        self._refresh_authorization_headers()
         mime_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
         boundary = f"codex_{uuid.uuid4().hex}"
         metadata = {"name": name, "parents": [parent_id]}
@@ -261,6 +292,7 @@ class GoogleDriveClient:
         return drive_file_from_payload(self.http_client.post(url, body, headers, self.timeout).payload)
 
     def update_file(self, local_path: Path, file_id: str, name: str | None = None) -> DriveFile:
+        self._refresh_authorization_headers()
         mime_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
         boundary = f"codex_{uuid.uuid4().hex}"
         metadata = {"name": name} if name else {}
@@ -282,6 +314,7 @@ class GoogleDriveClient:
         return drive_file_from_payload(self.http_client.patch(url, body, headers, self.timeout).payload)
 
     def trash_file(self, file_id: str) -> DriveFile:
+        self._refresh_authorization_headers()
         url = (
             f"{DRIVE_API_ROOT}/{file_id}"
             "?supportsAllDrives=true&fields=id,name,mimeType,webViewLink"
@@ -297,6 +330,7 @@ class GoogleDriveClient:
         )
 
     def list_permissions(self, file_id: str) -> list[dict[str, Any]]:
+        self._refresh_authorization_headers()
         params = {
             "supportsAllDrives": "true",
             "fields": (
@@ -311,6 +345,7 @@ class GoogleDriveClient:
         return [dict(permission) for permission in payload.get("permissions", [])]
 
     def create_permission(self, file_id: str, permission: Mapping[str, Any]) -> dict[str, Any]:
+        self._refresh_authorization_headers()
         params = {
             "supportsAllDrives": "true",
             "sendNotificationEmail": "false",
@@ -460,6 +495,46 @@ def parse_email_values(values: list[str] | tuple[str, ...] | None) -> tuple[str,
             seen.add(key)
             emails.append(email)
     return tuple(emails)
+
+
+def google_auth_default_token_provider() -> Callable[[], str] | None:
+    try:
+        import google.auth  # type: ignore
+        from google.auth.transport.requests import Request  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        credentials, _ = google.auth.default(
+            scopes=[
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/spreadsheets",
+            ]
+        )
+    except Exception:
+        return None
+
+    request = Request()
+
+    def token_provider() -> str:
+        if not getattr(credentials, "valid", False):
+            credentials.refresh(request)
+        token = getattr(credentials, "token", None)
+        if not token:
+            credentials.refresh(request)
+            token = getattr(credentials, "token", None)
+        if not token:
+            raise RuntimeError("Could not refresh Google OAuth access token from google.auth.default().")
+        return str(token)
+
+    return token_provider
+
+
+def build_token_provider(initial_token: str) -> Callable[[], str]:
+    google_provider = google_auth_default_token_provider()
+    if google_provider is not None:
+        return google_provider
+    return lambda: initial_token
 
 
 def resolve_existing_drive_file(
@@ -1278,8 +1353,9 @@ def run_workflow(
     study_folder = Path(study_folder)
     validate_existing_file_policy(existing_file_policy)
     token = resolve_access_token(access_token)
-    drive = GoogleDriveClient(token, timeout=timeout)
-    sheets_client = UrllibSheetsHttpClient()
+    token_provider = build_token_provider(token)
+    drive = GoogleDriveClient(token, timeout=timeout, token_provider=token_provider)
+    sheets_client = RefreshingSheetsHttpClient(UrllibSheetsHttpClient(), token_provider)
     state = WorkflowState(study_folder=study_folder, study_name=study_name, irb=irb)
 
     copy_result: TemplateCopyResult | None = None
