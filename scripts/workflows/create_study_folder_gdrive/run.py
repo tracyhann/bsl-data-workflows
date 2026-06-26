@@ -582,9 +582,18 @@ def copy_template_tree(
         name=root_name,
         existing_file_policy=existing_file_policy,
     )
-    permission_copy_result = PermissionCopyResult()
-    if copy_template_permissions_to_root:
-        permission_copy_result = copy_template_permissions(drive, template_folder_id, root_copy.id)
+    copied_permission_count = 0
+    permission_errors: list[str] = []
+
+    def stamp_template_permissions(target_file_id: str) -> None:
+        nonlocal copied_permission_count, permission_errors
+        if not copy_template_permissions_to_root:
+            return
+        result = copy_template_permissions(drive, template_folder_id, target_file_id)
+        copied_permission_count += result.copied_count
+        permission_errors.extend(result.errors)
+
+    stamp_template_permissions(root_copy.id)
     files_by_relative_path: dict[str, DriveFile] = {}
 
     def copy_children(source_folder_id: str, dest_folder: DriveFile, relative_parent: Path) -> None:
@@ -598,6 +607,7 @@ def copy_template_tree(
                     name=child_name,
                     existing_file_policy=existing_file_policy,
                 )
+                stamp_template_permissions(copied_folder.id)
                 files_by_relative_path[relative_path.as_posix()] = copied_folder
                 copy_children(child.id, copied_folder, relative_path)
             else:
@@ -611,14 +621,15 @@ def copy_template_tree(
                     raise FileExistsError(f"Google Drive item exists but is a folder: {child_name}")
                 if copied_file is None:
                     copied_file = drive.copy_file(child.id, child_name, dest_folder.id)
+                stamp_template_permissions(copied_file.id)
                 files_by_relative_path[relative_path.as_posix()] = copied_file
 
     copy_children(template_folder_id, root_copy, Path(""))
     return TemplateCopyResult(
         root=root_copy,
         files_by_relative_path=files_by_relative_path,
-        copied_permission_count=permission_copy_result.copied_count,
-        permission_errors=permission_copy_result.errors,
+        copied_permission_count=copied_permission_count,
+        permission_errors=tuple(permission_errors),
     )
 
 
@@ -848,6 +859,7 @@ def upload_cleaned_data(
     sheets_client: SheetsHttpClient | None = None,
     timeout: float = 120.0,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
+    permission_source_file_id: str | None = None,
 ) -> list[UploadedFile]:
     validate_existing_file_policy(existing_file_policy)
     plans = plan_cleaned_uploads(study_folder, cleaned_data_dir)
@@ -856,6 +868,10 @@ def upload_cleaned_data(
     results: list[UploadedFile] = []
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir)
+        def stamp_uploaded_permissions(drive_file: DriveFile) -> None:
+            if permission_source_file_id:
+                copy_template_permissions(drive, permission_source_file_id, drive_file.id)
+
         for plan in plans:
             parent = find_or_create_drive_folder_path(
                 drive,
@@ -881,6 +897,7 @@ def upload_cleaned_data(
                     reused_existing = copied is not None
                     if copied is None:
                         copied = drive.copy_file(template.id, plan.local_path.stem, parent.id)
+                    stamp_uploaded_permissions(copied)
                     workbook_path = (
                         workbook_from_csv(plan.local_path, temp_dir)
                         if plan.local_path.suffix.lower() == ".csv"
@@ -910,6 +927,7 @@ def upload_cleaned_data(
                         uploaded = existing
                     else:
                         uploaded = drive.update_file(plan.local_path, existing.id, plan.local_path.name)
+                    stamp_uploaded_permissions(uploaded)
                     results.append(UploadedFile(plan.local_path, plan.relative_path, uploaded))
             except Exception as exc:  # continue batch and log failures
                 results.append(UploadedFile(plan.local_path, plan.relative_path, None, str(exc)))
@@ -1260,6 +1278,7 @@ def run_workflow(
                 sheets_client=sheets_client,
                 timeout=timeout,
                 existing_file_policy=existing_file_policy,
+                permission_source_file_id=state.initialized_root.id if state.initialized_root else None,
             )
             successes = [result for result in state.upload_results if result.ok]
             failures = [result for result in state.upload_results if not result.ok]

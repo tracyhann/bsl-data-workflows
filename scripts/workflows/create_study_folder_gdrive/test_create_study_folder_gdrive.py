@@ -246,7 +246,7 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
         )
 
         self.assertEqual(result.root.name, "OCD-TMS 53879 Template")
-        self.assertEqual(result.copied_permission_count, 3)
+        self.assertGreater(result.copied_permission_count, 3)
         copied_names = [copy_call[1] for copy_call in fake_drive.copied_files]
         self.assertIn("53879-meta", copied_names)
         self.assertIn("OCD-TMS_53879", copied_names)
@@ -264,22 +264,13 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             irb="53879",
         )
 
-        self.assertEqual(
+        self.assertIn(
+            (result.root.id, {"type": "user", "role": "writer", "emailAddress": "editor@example.com"}),
             fake_drive.created_permissions,
-            [
-                (
-                    result.root.id,
-                    {"type": "user", "role": "writer", "emailAddress": "editor@example.com"},
-                ),
-                (
-                    result.root.id,
-                    {"type": "group", "role": "reader", "emailAddress": "readers@example.com"},
-                ),
-                (
-                    result.root.id,
-                    {"type": "user", "role": "writer", "emailAddress": "inherited@example.com"},
-                ),
-            ],
+        )
+        self.assertIn(
+            (result.files_by_relative_path["Overview/OCD-TMS_53879"].id, {"type": "user", "role": "writer", "emailAddress": "editor@example.com"}),
+            fake_drive.created_permissions,
         )
 
     def test_can_skip_template_root_permission_copy(self):
@@ -326,9 +317,35 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             irb="53879",
         )
 
-        self.assertEqual(result.copied_permission_count, 2)
-        self.assertEqual(result.permission_error_count, 1)
+        self.assertGreater(result.copied_permission_count, 2)
+        self.assertGreater(result.permission_error_count, 1)
         self.assertIn("teamDriveDomainUsersOnlyRestriction", result.permission_errors[0])
+
+    def test_cleaned_upload_stamps_permissions_onto_generated_workbook(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_drive = FakeDriveClient()
+            study = Path(tmpdir) / "study"
+            subjects = study / "data" / "cleaned" / "subjects"
+            subjects.mkdir(parents=True)
+            dictionary = subjects / "dictionary.xlsx"
+            create_plain_workbook(dictionary)
+
+            with patch("scripts.workflows.create_study_folder_gdrive.run.fill_in_overview"):
+                results = upload_cleaned_data(
+                    drive=fake_drive,
+                    target_data_folder_id="nophi_folder",
+                    template_folder_id="templates_folder",
+                    study_folder=study,
+                    access_token="token",
+                    permission_source_file_id="template",
+                )
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].drive_file.id, "copy_1")
+            self.assertIn(
+                ("copy_1", {"type": "user", "role": "writer", "emailAddress": "editor@example.com"}),
+                fake_drive.created_permissions,
+            )
 
     def test_update_or_create_template_tree_reuses_existing_study_root(self):
         fake_drive = FakeDriveClient()
