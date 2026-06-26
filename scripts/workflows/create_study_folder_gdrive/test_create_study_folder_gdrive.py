@@ -321,6 +321,27 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
         self.assertGreater(result.permission_error_count, 1)
         self.assertIn("teamDriveDomainUsersOnlyRestriction", result.permission_errors[0])
 
+    def test_explicit_sheet_editors_apply_only_to_template_google_sheets(self):
+        fake_drive = FakeDriveClient()
+
+        result = copy_template_tree(
+            drive=fake_drive,
+            template_folder_id="template",
+            destination_parent_id="dest",
+            study_name="OCD-TMS",
+            irb="53879",
+            copy_template_permissions_to_root=False,
+            sheet_editor_emails=("analyst@gmail.com",),
+        )
+
+        explicit_permission = {"type": "user", "role": "writer", "emailAddress": "analyst@gmail.com"}
+        explicit_targets = [
+            file_id for file_id, permission in fake_drive.created_permissions if permission == explicit_permission
+        ]
+        self.assertNotIn(result.root.id, explicit_targets)
+        self.assertTrue(explicit_targets)
+        self.assertTrue(all(fake_drive.files[file_id].is_google_sheet for file_id in explicit_targets))
+
     def test_cleaned_upload_stamps_permissions_onto_generated_workbook(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_drive = FakeDriveClient()
@@ -344,6 +365,32 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
             self.assertEqual(results[0].drive_file.id, "copy_1")
             self.assertIn(
                 ("copy_1", {"type": "user", "role": "writer", "emailAddress": "editor@example.com"}),
+                fake_drive.created_permissions,
+            )
+
+    def test_cleaned_upload_adds_explicit_editors_only_to_google_sheets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_drive = FakeDriveClient()
+            study = Path(tmpdir) / "study"
+            subjects = study / "data" / "cleaned" / "subjects"
+            subjects.mkdir(parents=True)
+            dictionary = subjects / "dictionary.xlsx"
+            create_plain_workbook(dictionary)
+
+            with patch("scripts.workflows.create_study_folder_gdrive.run.fill_in_overview"):
+                results = upload_cleaned_data(
+                    drive=fake_drive,
+                    target_data_folder_id="nophi_folder",
+                    template_folder_id="templates_folder",
+                    study_folder=study,
+                    access_token="token",
+                    sheet_editor_emails=("analyst@gmail.com",),
+                )
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].drive_file.id, "copy_1")
+            self.assertIn(
+                ("copy_1", {"type": "user", "role": "writer", "emailAddress": "analyst@gmail.com"}),
                 fake_drive.created_permissions,
             )
 

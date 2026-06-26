@@ -446,6 +446,22 @@ def validate_existing_file_policy(policy: str) -> str:
     return policy
 
 
+def parse_email_values(values: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    emails: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        for email in re.split(r"[\s,;]+", str(value).strip()):
+            email = email.strip()
+            if not email:
+                continue
+            key = email.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            emails.append(email)
+    return tuple(emails)
+
+
 def resolve_existing_drive_file(
     *,
     drive: Any,
@@ -556,6 +572,37 @@ def copy_template_permissions(drive: Any, template_file_id: str, target_file_id:
     return PermissionCopyResult(copied_count=copied_count, errors=tuple(errors))
 
 
+def add_sheet_editor_permissions(
+    drive: Any,
+    drive_file: DriveFile,
+    emails: tuple[str, ...] | list[str] | None,
+) -> PermissionCopyResult:
+    parsed_emails = parse_email_values(tuple(emails or ()))
+    if not parsed_emails or not drive_file.is_google_sheet:
+        return PermissionCopyResult()
+
+    existing_keys = {
+        permission_key(permission)
+        for permission in drive.list_permissions(drive_file.id)
+        if permission_key(permission) != ("", "")
+    }
+    copied_count = 0
+    errors: list[str] = []
+    for email in parsed_emails:
+        body = {"type": "user", "role": "writer", "emailAddress": email}
+        key = permission_key(body)
+        if key in existing_keys:
+            continue
+        try:
+            drive.create_permission(drive_file.id, body)
+        except Exception as exc:
+            errors.append(f"user:{email.lower()} role=writer: {exc}")
+            continue
+        existing_keys.add(key)
+        copied_count += 1
+    return PermissionCopyResult(copied_count=copied_count, errors=tuple(errors))
+
+
 def irb_meta_path_candidates(irb_meta_path: str, *, study_name: str, irb: str) -> list[str]:
     resolved = replace_placeholders(irb_meta_path, study_name=study_name, irb=irb)
     candidates = [resolved]
@@ -573,6 +620,7 @@ def copy_template_tree(
     irb: str,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
     copy_template_permissions_to_root: bool = True,
+    sheet_editor_emails: tuple[str, ...] = (),
 ) -> TemplateCopyResult:
     template_root = drive.get_file(template_folder_id)
     root_name = replace_placeholders(template_root.name, study_name=study_name, irb=irb)
@@ -594,6 +642,13 @@ def copy_template_tree(
         permission_errors.extend(result.errors)
 
     stamp_template_permissions(root_copy.id)
+
+    def stamp_sheet_editors(drive_file: DriveFile) -> None:
+        nonlocal copied_permission_count, permission_errors
+        result = add_sheet_editor_permissions(drive, drive_file, sheet_editor_emails)
+        copied_permission_count += result.copied_count
+        permission_errors.extend(result.errors)
+
     files_by_relative_path: dict[str, DriveFile] = {}
 
     def copy_children(source_folder_id: str, dest_folder: DriveFile, relative_parent: Path) -> None:
@@ -608,6 +663,7 @@ def copy_template_tree(
                     existing_file_policy=existing_file_policy,
                 )
                 stamp_template_permissions(copied_folder.id)
+                stamp_sheet_editors(copied_folder)
                 files_by_relative_path[relative_path.as_posix()] = copied_folder
                 copy_children(child.id, copied_folder, relative_path)
             else:
@@ -622,6 +678,7 @@ def copy_template_tree(
                 if copied_file is None:
                     copied_file = drive.copy_file(child.id, child_name, dest_folder.id)
                 stamp_template_permissions(copied_file.id)
+                stamp_sheet_editors(copied_file)
                 files_by_relative_path[relative_path.as_posix()] = copied_file
 
     copy_children(template_folder_id, root_copy, Path(""))
@@ -860,6 +917,7 @@ def upload_cleaned_data(
     timeout: float = 120.0,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
     permission_source_file_id: str | None = None,
+    sheet_editor_emails: tuple[str, ...] = (),
 ) -> list[UploadedFile]:
     validate_existing_file_policy(existing_file_policy)
     plans = plan_cleaned_uploads(study_folder, cleaned_data_dir)
@@ -871,6 +929,7 @@ def upload_cleaned_data(
         def stamp_uploaded_permissions(drive_file: DriveFile) -> None:
             if permission_source_file_id:
                 copy_template_permissions(drive, permission_source_file_id, drive_file.id)
+            add_sheet_editor_permissions(drive, drive_file, sheet_editor_emails)
 
         for plan in plans:
             parent = find_or_create_drive_folder_path(
@@ -1149,6 +1208,7 @@ def initialize_drive_folder(
     timeout: float = 120.0,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
     copy_template_permissions_to_root: bool = True,
+    sheet_editor_emails: tuple[str, ...] = (),
 ) -> TemplateCopyResult:
     result = copy_template_tree(
         drive=drive,
@@ -1158,6 +1218,7 @@ def initialize_drive_folder(
         irb=irb,
         existing_file_policy=existing_file_policy,
         copy_template_permissions_to_root=copy_template_permissions_to_root,
+        sheet_editor_emails=sheet_editor_emails,
     )
     irb_meta = None
     for candidate in irb_meta_path_candidates(irb_meta_path, study_name=study_name, irb=irb):
@@ -1184,6 +1245,7 @@ def initialize_drive_folder(
             f"copied template permissions: {copy_template_permissions_to_root}",
             f"copied permission count: {result.copied_permission_count}",
             f"permission copy errors: {result.permission_error_count}",
+            f"explicit sheet editors: {', '.join(sheet_editor_emails) if sheet_editor_emails else ''}",
             *[f"- {error}" for error in result.permission_errors],
         ],
     )
@@ -1211,6 +1273,7 @@ def run_workflow(
     timeout: float = 120.0,
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
     copy_template_permissions_to_root: bool = True,
+    sheet_editor_emails: tuple[str, ...] = (),
 ) -> WorkflowState:
     study_folder = Path(study_folder)
     validate_existing_file_policy(existing_file_policy)
@@ -1236,6 +1299,7 @@ def run_workflow(
             timeout=timeout,
             existing_file_policy=existing_file_policy,
             copy_template_permissions_to_root=copy_template_permissions_to_root,
+            sheet_editor_emails=sheet_editor_emails,
         )
         state.initialized_root = copy_result.root
     elif initialized_folder_id:
@@ -1279,6 +1343,7 @@ def run_workflow(
                 timeout=timeout,
                 existing_file_policy=existing_file_policy,
                 permission_source_file_id=state.initialized_root.id if state.initialized_root else None,
+                sheet_editor_emails=sheet_editor_emails,
             )
             successes = [result for result in state.upload_results if result.ok]
             failures = [result for result in state.upload_results if not result.ok]
@@ -1388,6 +1453,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not copy direct non-owner permissions from the template folder to the initialized study folder.",
     )
+    parser.add_argument(
+        "--share-sheet-editor",
+        action="append",
+        default=[],
+        help=(
+            "Email address to grant writer access on Google Sheets files only. "
+            "May be repeated, or contain comma/semicolon/space-separated emails."
+        ),
+    )
     parser.add_argument("--access-token", help="Google OAuth token. Defaults to env/gcloud lookup.")
     parser.add_argument("--timeout", type=float, default=120.0, help="Google API timeout in seconds.")
     return parser
@@ -1415,6 +1489,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         existing_file_policy=args.existing_file_policy,
         copy_template_permissions_to_root=not args.no_copy_template_permissions,
+        sheet_editor_emails=parse_email_values(args.share_sheet_editor),
     )
     print(
         json.dumps(
