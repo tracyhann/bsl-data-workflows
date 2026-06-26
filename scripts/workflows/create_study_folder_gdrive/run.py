@@ -10,6 +10,7 @@ import mimetypes
 import re
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -400,6 +401,8 @@ class UploadedFile:
     relative_path: Path
     drive_file: DriveFile | None = None
     error: str | None = None
+    permission_count: int = 0
+    permission_errors: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -699,6 +702,8 @@ def add_protected_sheet_editors(
     access_token: str,
     emails: tuple[str, ...] | list[str] | None,
     timeout: float = 120.0,
+    retry_count: int = 3,
+    retry_sleep: float = 1.0,
 ) -> PermissionCopyResult:
     parsed_emails = parse_email_values(tuple(emails or ()))
     if not parsed_emails:
@@ -727,12 +732,13 @@ def add_protected_sheet_editors(
                 continue
             editors = dict(protected_range.get("editors") or {})
             users = [str(user) for user in editors.get("users", []) if str(user).strip()]
+            original_user_count = len(users)
             seen = {user.lower() for user in users}
             for email in parsed_emails:
                 if email.lower() not in seen:
                     users.append(email)
                     seen.add(email.lower())
-            if len(users) == len([str(user) for user in editors.get("users", []) if str(user).strip()]):
+            if len(users) == original_user_count:
                 continue
             editors["users"] = users
             requests.append(
@@ -750,15 +756,22 @@ def add_protected_sheet_editors(
     if not requests:
         return PermissionCopyResult()
 
-    try:
-        sheets_client.post(
-            sheets_batch_update_url(spreadsheet_id),
-            json.dumps({"requests": requests}).encode("utf-8"),
-            json_headers(access_token),
-            timeout,
-        )
-    except Exception as exc:
-        return PermissionCopyResult(errors=(f"protected-range update failed: {exc}",))
+    last_error: Exception | None = None
+    for attempt in range(1, max(1, retry_count) + 1):
+        try:
+            sheets_client.post(
+                sheets_batch_update_url(spreadsheet_id),
+                json.dumps({"requests": requests}).encode("utf-8"),
+                json_headers(access_token),
+                timeout,
+            )
+            return PermissionCopyResult(copied_count=len(requests))
+        except Exception as exc:
+            last_error = exc
+            if attempt < max(1, retry_count):
+                time.sleep(retry_sleep * attempt)
+    if last_error is not None:
+        return PermissionCopyResult(errors=(f"protected-range update failed: {last_error}",))
     return PermissionCopyResult(copied_count=len(requests))
 
 
@@ -1100,18 +1113,27 @@ def upload_cleaned_data(
     results: list[UploadedFile] = []
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir)
-        def stamp_uploaded_permissions(drive_file: DriveFile) -> None:
+        def stamp_uploaded_permissions(drive_file: DriveFile) -> PermissionCopyResult:
+            copied_count = 0
+            errors: list[str] = []
             if permission_source_file_id:
-                copy_template_permissions(drive, permission_source_file_id, drive_file.id)
-            add_sheet_editor_permissions(drive, drive_file, sheet_editor_emails)
+                result = copy_template_permissions(drive, permission_source_file_id, drive_file.id)
+                copied_count += result.copied_count
+                errors.extend(result.errors)
+            result = add_sheet_editor_permissions(drive, drive_file, sheet_editor_emails)
+            copied_count += result.copied_count
+            errors.extend(result.errors)
             if drive_file.is_google_sheet:
-                add_protected_sheet_editors(
+                protected_result = add_protected_sheet_editors(
                     sheets_client=sheets_client,
                     spreadsheet_id=drive_file.id,
                     access_token=access_token,
                     emails=sheet_editor_emails,
                     timeout=timeout,
                 )
+                copied_count += protected_result.copied_count
+                errors.extend(protected_result.errors)
+            return PermissionCopyResult(copied_count=copied_count, errors=tuple(errors))
 
         for plan in plans:
             parent = find_or_create_drive_folder_path(
@@ -1138,7 +1160,7 @@ def upload_cleaned_data(
                     reused_existing = copied is not None
                     if copied is None:
                         copied = drive.copy_file(template.id, plan.local_path.stem, parent.id)
-                    stamp_uploaded_permissions(copied)
+                    permission_result = stamp_uploaded_permissions(copied)
                     workbook_path = (
                         workbook_from_csv(plan.local_path, temp_dir)
                         if plan.local_path.suffix.lower() == ".csv"
@@ -1154,7 +1176,15 @@ def upload_cleaned_data(
                             write_full_sheet_when_no_headers=True,
                             sync_template_tab_to_source_sheets=plan.template_name == BLANK_TEMPLATE_NAME,
                         )
-                    results.append(UploadedFile(plan.local_path, plan.relative_path, copied))
+                    results.append(
+                        UploadedFile(
+                            plan.local_path,
+                            plan.relative_path,
+                            copied,
+                            permission_count=permission_result.copied_count,
+                            permission_errors=permission_result.errors,
+                        )
+                    )
                 else:
                     existing = resolve_existing_drive_file(
                         drive=drive,
@@ -1168,8 +1198,16 @@ def upload_cleaned_data(
                         uploaded = existing
                     else:
                         uploaded = drive.update_file(plan.local_path, existing.id, plan.local_path.name)
-                    stamp_uploaded_permissions(uploaded)
-                    results.append(UploadedFile(plan.local_path, plan.relative_path, uploaded))
+                    permission_result = stamp_uploaded_permissions(uploaded)
+                    results.append(
+                        UploadedFile(
+                            plan.local_path,
+                            plan.relative_path,
+                            uploaded,
+                            permission_count=permission_result.copied_count,
+                            permission_errors=permission_result.errors,
+                        )
+                    )
             except Exception as exc:  # continue batch and log failures
                 results.append(UploadedFile(plan.local_path, plan.relative_path, None, str(exc)))
     return results
@@ -1533,12 +1571,24 @@ def run_workflow(
             )
             successes = [result for result in state.upload_results if result.ok]
             failures = [result for result in state.upload_results if not result.ok]
+            permission_warnings = [
+                result
+                for result in successes
+                if result.permission_errors
+            ]
+            permission_update_count = sum(result.permission_count for result in successes)
             append_log(
                 study_folder,
                 "Google Drive Upload",
                 [
                     "## Cleaned Data Upload",
                     f"successfully uploaded {len(successes)} files",
+                    f"sheet permission/protection updates: {permission_update_count}",
+                    f"permission update warnings: {len(permission_warnings)}",
+                    *[
+                        f"- {warning.relative_path}: {'; '.join(warning.permission_errors)}"
+                        for warning in permission_warnings
+                    ],
                     "failed files:",
                     *[f"- {failure.relative_path}: {failure.error}" for failure in failures],
                 ],
@@ -1686,6 +1736,9 @@ def main(argv: list[str] | None = None) -> int:
                 "initialized_folder": state.initialized_root.web_url if state.initialized_root else None,
                 "uploaded": len([result for result in state.upload_results if result.ok]),
                 "failed": len([result for result in state.upload_results if not result.ok]),
+                "permission_warnings": len(
+                    [result for result in state.upload_results if result.ok and result.permission_errors]
+                ),
             },
             indent=2,
         )
