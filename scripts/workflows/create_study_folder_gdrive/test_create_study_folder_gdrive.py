@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from scripts.workflows.create_study_folder_gdrive.run import (
     UploadedFile,
     GoogleDriveClient,
     RefreshingSheetsHttpClient,
+    add_protected_sheet_editors,
     copy_template_tree,
     copy_template_permissions,
     find_template_by_name,
@@ -225,15 +227,18 @@ class FakeDriveHttpClient:
 
 
 class FakeSheetsHttpClient:
-    def __init__(self):
+    def __init__(self, payload=None):
+        self.payload = payload or {}
         self.get_headers = []
+        self.post_bodies = []
 
     def get(self, url, headers, timeout):
         self.get_headers.append(dict(headers))
-        return type("Response", (), {"payload": {}})()
+        return type("Response", (), {"payload": self.payload})()
 
     def post(self, url, body, headers, timeout):
         self.get_headers.append(dict(headers))
+        self.post_bodies.append(body)
         return type("Response", (), {"payload": {}})()
 
 
@@ -283,6 +288,62 @@ class CreateStudyFolderGDriveTests(unittest.TestCase):
 
         self.assertEqual(fake_http.get_headers[0]["Authorization"], "Bearer sheet_1")
         self.assertEqual(fake_http.get_headers[1]["Authorization"], "Bearer sheet_2")
+
+    def test_add_protected_sheet_editors_updates_existing_protections(self):
+        fake_http = FakeSheetsHttpClient(
+            {
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 1, "title": "cleaned"},
+                        "protectedRanges": [
+                            {
+                                "protectedRangeId": 99,
+                                "editors": {"users": ["owner@example.com"], "groups": []},
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+        result = add_protected_sheet_editors(
+            sheets_client=fake_http,
+            spreadsheet_id="sheet123",
+            access_token="token",
+            emails=("new@example.com", "owner@example.com"),
+        )
+
+        self.assertEqual(result.copied_count, 1)
+        body = json.loads(fake_http.post_bodies[0].decode("utf-8"))
+        editors = body["requests"][0]["updateProtectedRange"]["protectedRange"]["editors"]
+        self.assertEqual(editors["users"], ["owner@example.com", "new@example.com"])
+
+    def test_add_protected_sheet_editors_skips_warning_only_protections(self):
+        fake_http = FakeSheetsHttpClient(
+            {
+                "sheets": [
+                    {
+                        "protectedRanges": [
+                            {
+                                "protectedRangeId": 99,
+                                "warningOnly": True,
+                                "editors": {"users": ["owner@example.com"]},
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+
+        result = add_protected_sheet_editors(
+            sheets_client=fake_http,
+            spreadsheet_id="sheet123",
+            access_token="token",
+            emails=("new@example.com",),
+        )
+
+        self.assertEqual(result.copied_count, 0)
+        self.assertEqual(fake_http.post_bodies, [])
 
     def test_replaces_study_and_irb_placeholders_case_sensitively(self):
         self.assertEqual(

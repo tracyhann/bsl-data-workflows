@@ -33,6 +33,7 @@ from scripts.push_to_gdrive.fill_in_overview import (  # noqa: E402
     json_headers,
     load_sheet_properties,
     load_target_headers,
+    sheets_batch_update_url,
     sheets_values_batch_update_url,
 )
 from scripts.push_to_gdrive.fill_in_overview import fill_in_overview  # noqa: E402
@@ -678,6 +679,89 @@ def add_sheet_editor_permissions(
     return PermissionCopyResult(copied_count=copied_count, errors=tuple(errors))
 
 
+def protected_ranges_metadata_url(spreadsheet_id: str) -> str:
+    fields = (
+        "sheets("
+        "properties(sheetId,title),"
+        "protectedRanges(protectedRangeId,description,warningOnly,editors,range(sheetId))"
+        ")"
+    )
+    return (
+        f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}"
+        f"?includeGridData=false&fields={urllib.parse.quote(fields, safe='(),')}"
+    )
+
+
+def add_protected_sheet_editors(
+    *,
+    sheets_client: SheetsHttpClient,
+    spreadsheet_id: str,
+    access_token: str,
+    emails: tuple[str, ...] | list[str] | None,
+    timeout: float = 120.0,
+) -> PermissionCopyResult:
+    parsed_emails = parse_email_values(tuple(emails or ()))
+    if not parsed_emails:
+        return PermissionCopyResult()
+
+    try:
+        metadata = sheets_client.get(
+            protected_ranges_metadata_url(spreadsheet_id),
+            json_headers(access_token),
+            timeout,
+        ).payload
+    except Exception as exc:
+        return PermissionCopyResult(errors=(f"protected-range read failed: {exc}",))
+
+    requests: list[dict[str, Any]] = []
+    for sheet in metadata.get("sheets", []):
+        if not isinstance(sheet, Mapping):
+            continue
+        for protected_range in sheet.get("protectedRanges", []) or []:
+            if not isinstance(protected_range, Mapping):
+                continue
+            if protected_range.get("warningOnly"):
+                continue
+            protected_range_id = protected_range.get("protectedRangeId")
+            if protected_range_id is None:
+                continue
+            editors = dict(protected_range.get("editors") or {})
+            users = [str(user) for user in editors.get("users", []) if str(user).strip()]
+            seen = {user.lower() for user in users}
+            for email in parsed_emails:
+                if email.lower() not in seen:
+                    users.append(email)
+                    seen.add(email.lower())
+            if len(users) == len([str(user) for user in editors.get("users", []) if str(user).strip()]):
+                continue
+            editors["users"] = users
+            requests.append(
+                {
+                    "updateProtectedRange": {
+                        "protectedRange": {
+                            "protectedRangeId": protected_range_id,
+                            "editors": editors,
+                        },
+                        "fields": "editors",
+                    }
+                }
+            )
+
+    if not requests:
+        return PermissionCopyResult()
+
+    try:
+        sheets_client.post(
+            sheets_batch_update_url(spreadsheet_id),
+            json.dumps({"requests": requests}).encode("utf-8"),
+            json_headers(access_token),
+            timeout,
+        )
+    except Exception as exc:
+        return PermissionCopyResult(errors=(f"protected-range update failed: {exc}",))
+    return PermissionCopyResult(copied_count=len(requests))
+
+
 def irb_meta_path_candidates(irb_meta_path: str, *, study_name: str, irb: str) -> list[str]:
     resolved = replace_placeholders(irb_meta_path, study_name=study_name, irb=irb)
     candidates = [resolved]
@@ -696,6 +780,9 @@ def copy_template_tree(
     existing_file_policy: str = DEFAULT_EXISTING_FILE_POLICY,
     copy_template_permissions_to_root: bool = True,
     sheet_editor_emails: tuple[str, ...] = (),
+    sheets_client: SheetsHttpClient | None = None,
+    access_token: str | None = None,
+    timeout: float = 120.0,
 ) -> TemplateCopyResult:
     template_root = drive.get_file(template_folder_id)
     root_name = replace_placeholders(template_root.name, study_name=study_name, irb=irb)
@@ -723,6 +810,18 @@ def copy_template_tree(
         result = add_sheet_editor_permissions(drive, drive_file, sheet_editor_emails)
         copied_permission_count += result.copied_count
         permission_errors.extend(result.errors)
+        if drive_file.is_google_sheet and sheets_client is not None and access_token is not None:
+            protected_result = add_protected_sheet_editors(
+                sheets_client=sheets_client,
+                spreadsheet_id=drive_file.id,
+                access_token=access_token,
+                emails=sheet_editor_emails,
+                timeout=timeout,
+            )
+            copied_permission_count += protected_result.copied_count
+            permission_errors.extend(
+                f"{drive_file.name}: {error}" for error in protected_result.errors
+            )
 
     files_by_relative_path: dict[str, DriveFile] = {}
 
@@ -1005,6 +1104,14 @@ def upload_cleaned_data(
             if permission_source_file_id:
                 copy_template_permissions(drive, permission_source_file_id, drive_file.id)
             add_sheet_editor_permissions(drive, drive_file, sheet_editor_emails)
+            if drive_file.is_google_sheet:
+                add_protected_sheet_editors(
+                    sheets_client=sheets_client,
+                    spreadsheet_id=drive_file.id,
+                    access_token=access_token,
+                    emails=sheet_editor_emails,
+                    timeout=timeout,
+                )
 
         for plan in plans:
             parent = find_or_create_drive_folder_path(
@@ -1294,6 +1401,9 @@ def initialize_drive_folder(
         existing_file_policy=existing_file_policy,
         copy_template_permissions_to_root=copy_template_permissions_to_root,
         sheet_editor_emails=sheet_editor_emails,
+        sheets_client=sheets_client,
+        access_token=access_token,
+        timeout=timeout,
     )
     irb_meta = None
     for candidate in irb_meta_path_candidates(irb_meta_path, study_name=study_name, irb=irb):
