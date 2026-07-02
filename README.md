@@ -254,9 +254,9 @@ Human checkpoint:
 Merge two already-cleaned and verified study folders.
 
 ```bash
-STUDY1="studies/54909-BRAINS"
-STUDY2="studies/58807-BRAINS"
-MERGED_STUDY="studies/54909-58807-BRAINS"
+STUDY1="studies/12345-STUDY-A"
+STUDY2="studies/56789-STUDY-B"
+MERGED_STUDY="studies/12345-56789-STUDY"
 
 python3 scripts/merge_studies/run.py \
   --study1 "$STUDY1" \

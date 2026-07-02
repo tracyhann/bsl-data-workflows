@@ -366,7 +366,7 @@ def canonicalize_record_id(value: object) -> CanonicalRecordId:
             numeric_token=normalized,
         )
 
-    # 58807_s025, 58807-s025, 58807 s025 xover, 58807.sub025.ol
+    # 12345_s025, 12345-s025, 12345 s025 xover, 12345.sub025.ol
     match = re.match(r"^(\d+)_+([a-z]+)(\d+)(?:_+(.+))?$", normalized)
     if match:
         return _canonical_from_parts(
@@ -379,7 +379,7 @@ def canonicalize_record_id(value: object) -> CanonicalRecordId:
             suffix=match.group(4) or "",
         )
 
-    # 58807_s025xover or 58807_s002a.
+    # 12345_s025xover or 12345_s002a.
     match = re.match(r"^(\d+)_+([a-z]+?)(\d+)([a-z][a-z0-9_]*)$", normalized)
     if match:
         return _canonical_from_parts(
@@ -392,7 +392,7 @@ def canonicalize_record_id(value: object) -> CanonicalRecordId:
             suffix=match.group(4),
         )
 
-    # 58807s025, 58807b025, 58807s025xover. This deliberately treats any
+    # 12345s025, 12345b025, 12345s025xover. This deliberately treats any
     # letters+digits token as a subject token, not only s###.
     match = re.match(r"^(\d+)([a-z]+?)(\d+)([a-z][a-z0-9_]*)?$", normalized)
     if match:
@@ -406,7 +406,7 @@ def canonicalize_record_id(value: object) -> CanonicalRecordId:
             suffix=match.group(4) or "",
         )
 
-    # MDD_10598, OCD_2780, LEAP_001, MDD_10598_duplicate.
+    # ABC_10598, XYZ_2780, STUDY_001, ABC_10598_duplicate.
     match = re.match(r"^([a-z]+)_+(\d+)(?:_+(.+))?$", normalized)
     if match:
         return _canonical_from_parts(

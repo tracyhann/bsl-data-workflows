@@ -26,7 +26,6 @@ Rules we implement:
 ## Layout
 
 - `run.py`: CLI and workbook scanner.
-- `test_subject_timepoints.py`: tests for grouping, sorting, and source tracing.
 
 ## Required Input Structure
 

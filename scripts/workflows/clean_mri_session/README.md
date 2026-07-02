@@ -27,7 +27,6 @@ Rules we implement:
 ## Layout
 
 - `run.py`: CLI and implementation for MRI session cleaning.
-- `test_clean_mri_session.py`: unit tests for subject/date/visit matching.
 
 ## Primary Inputs
 

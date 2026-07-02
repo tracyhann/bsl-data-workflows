@@ -35,7 +35,6 @@ subjects, assessments, treatments, neuroimaging, biologics_biometrics, safety_re
 - `run.py`: CLI and classification logic.
 - `keywords.json`: observed and related keyword rules by category.
 - `semantics.json`: category captions and expanded clinical abbreviations.
-- `test_classify_instruments.py`: unit tests for the classifier.
 
 ## Primary Inputs
 

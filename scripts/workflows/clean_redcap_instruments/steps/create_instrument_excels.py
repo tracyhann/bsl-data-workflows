@@ -24,11 +24,9 @@ from scripts.standardize_record_id.presidio.redcap_subid_presidio import find_re
 from scripts.workflows.clean_redcap_instruments.steps.exclude_column import flag_sensitive_columns
 
 
-DEFAULT_DICTIONARY = Path("scripts/workflows/dev/intermediates/dictionary.xlsx")
-DEFAULT_INSTRUMENT_COLUMNS = Path(
-    "scripts/workflows/dev/intermediates/58807SchatzbergRapid_DATA_2026-06-15_0333_instrument_columns.csv"
-)
-DEFAULT_OUT_DIR = Path("scripts/workflows/dev")
+DEFAULT_DICTIONARY = Path("intermediates/dictionary.xlsx")
+DEFAULT_INSTRUMENT_COLUMNS = Path("intermediates/example_DATA_instrument_columns.csv")
+DEFAULT_OUT_DIR = Path("outputs")
 REDCAP_ID_NAMES = {"record_id", "record id", "recordid", "Record ID"}
 EVENT_NAMES = {"redcap_event_name", "event_name", "event name", "Event Name", "unique_event_name"}
 DATE_COLUMN_RE = re.compile(r"date|time|timestamp", re.IGNORECASE)

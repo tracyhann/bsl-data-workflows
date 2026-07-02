@@ -27,8 +27,6 @@ Rules we implement:
 
 - `run.py`: CLI for reading CSV, TSV, XLSX, or XLS inputs.
 - `event_discovery.py`: parsing and grouping logic.
-- `test_discover_events.py`: tests for arm and event parsing.
-- `dev/experiments/`: synthetic data generation for exploratory testing.
 
 ## Copy-Paste Command Template
 

@@ -80,37 +80,37 @@ Run for one study:
 
 ```bash
 python3 scripts/create_study_overview/run.py \
-  --study-folder studies/54909-58807-BRAINS
+  --study-folder studies/12345-56789-STUDY
 ```
 
 Run with an explicit output workbook:
 
 ```bash
 python3 scripts/create_study_overview/run.py \
-  --study-folder studies/54909-58807-BRAINS \
-  --out studies/54909-58807-BRAINS/overview/54909-58807-BRAINS.xlsx
+  --study-folder studies/12345-56789-STUDY \
+  --out studies/12345-56789-STUDY/overview/12345-56789-STUDY.xlsx
 ```
 
 Run with a custom semantics file:
 
 ```bash
 python3 scripts/create_study_overview/run.py \
-  --study-folder studies/54909-58807-BRAINS \
+  --study-folder studies/12345-56789-STUDY \
   --semantics scripts/classify_instruments/semantics.json
 ```
 
 Current common study commands:
 
 ```bash
-python3 scripts/create_study_overview/run.py --study-folder studies/53879-62882-OCD-TMS
+python3 scripts/create_study_overview/run.py --study-folder studies/12345-56789-STUDY
 ```
 
 ```bash
-python3 scripts/create_study_overview/run.py --study-folder studies/63771-LEAP
+python3 scripts/create_study_overview/run.py --study-folder studies/12345-STUDY
 ```
 
 ```bash
-python3 scripts/create_study_overview/run.py --study-folder studies/71771-LEAP-OL
+python3 scripts/create_study_overview/run.py --study-folder studies/12345-STUDY-OL
 ```
 
 ## Workflow Checkpoint

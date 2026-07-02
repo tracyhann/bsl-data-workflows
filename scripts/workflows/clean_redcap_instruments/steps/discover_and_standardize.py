@@ -19,12 +19,9 @@ from scripts.standardize_record_id.run import process_file as standardize_record
 from scripts.workflows.clean_redcap_instruments.steps.create_redcap_index_dictionary import DictionaryResult, create_dictionary
 
 
-DEFAULT_INPUT = Path(
-    "58807-54909-BRAINS-wiki/data/FREEZE/raw_exports/redcap/all/"
-    "58807SchatzbergRapid_DATA_2026-06-15_0333.csv"
-)
-DEFAULT_OUT_DIR = Path(__file__).resolve().parent / "dev" / "intermediates"
-DEFAULT_LOG = Path(__file__).resolve().parent / "log.md"
+DEFAULT_INPUT = Path("examples/redcap/example_DATA.csv")
+DEFAULT_OUT_DIR = Path("intermediates")
+DEFAULT_LOG = Path("log.md")
 
 
 def timestamp() -> str:

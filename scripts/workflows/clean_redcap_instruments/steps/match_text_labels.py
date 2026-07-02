@@ -21,18 +21,12 @@ if __package__ in {None, ""}:
 from scripts.discover_events.event_discovery import parse_event_value, resolve_event_column_index
 
 
-DEFAULT_RAW_CSV = Path(
-    "58807-54909-BRAINS-wiki/data/FREEZE/raw_exports/redcap/all/"
-    "58807SchatzbergRapid_DATA_2026-06-15_0333.csv"
-)
-DEFAULT_LABELS_CSV = Path(
-    "58807-54909-BRAINS-wiki/data/FREEZE/raw_exports/redcap/all/"
-    "58807SchatzbergRapid_DATA_LABELS_2026-06-11_1539.csv"
-)
-DEFAULT_DICTIONARY = Path("scripts/workflows/dev/intermediates/dictionary.xlsx")
-DEFAULT_AUDIT = Path("scripts/workflows/dev/intermediates/event_label_match_audit.csv")
-DEFAULT_INSTRUMENT_AUDIT = Path("scripts/workflows/dev/intermediates/instrument_label_match_audit.csv")
-DEFAULT_LOG = Path("scripts/workflows/log.md")
+DEFAULT_RAW_CSV = Path("examples/redcap/example_DATA.csv")
+DEFAULT_LABELS_CSV = Path("examples/redcap/example_DATA_LABELS.csv")
+DEFAULT_DICTIONARY = Path("intermediates/dictionary.xlsx")
+DEFAULT_AUDIT = Path("intermediates/event_label_match_audit.csv")
+DEFAULT_INSTRUMENT_AUDIT = Path("intermediates/instrument_label_match_audit.csv")
+DEFAULT_LOG = Path("log.md")
 SCRIPT_PATH = Path("scripts/workflows/clean_redcap_instruments/steps/match_text_labels.py")
 EVENT_LOG_BEGIN = "<!-- BEGIN MATCH_TEXT_LABELS EVENT -->"
 EVENT_LOG_END = "<!-- END MATCH_TEXT_LABELS EVENT -->"

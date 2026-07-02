@@ -1,9 +1,29 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Local study data and generated artifacts.
 *.csv
 *.xlsx
 *.xls
 *.xml
 *.zip
+studies/
+outputs/
+reports/
+survey_plots/
+tmp/
+
+# Development experiments and private scratch utilities.
+scripts/**/dev/
 scripts/workflows/dev/
+scripts/SCRATCH.md
+scripts/analyze_bsl_survey.py
+scripts/build_trial_hub.py
+scripts/inspect_redcap.py
+scripts/plot_bsl_survey.py
+
+# Tests are kept out of the public workflow distribution.
+scripts/**/test/
+scripts/**/test_*.py
+scripts/test_*.py

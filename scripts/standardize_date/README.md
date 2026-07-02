@@ -24,8 +24,6 @@ Rules we implement:
 
 - `run.py`: CLI for applying date recognition to one table column.
 - `date_standardizer.py`: reusable date parsing and standardization functions.
-- `test_standardize_date.py`: unit tests for date parsing.
-- `dev/experiments/`: synthetic date variation generator.
 
 ## Copy-Paste Command Template
 

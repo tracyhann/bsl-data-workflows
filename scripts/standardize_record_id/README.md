@@ -14,8 +14,8 @@ Rules we implement:
 
 - **Process one selected column.** The default is column index `0`, usually
   `record_id` or `Record ID`.
-- **Standardize IDs to `IRB_s0*`.** Examples: `58807_s025`,
-  `58807s025`, and `58807_b025` can resolve to the same canonical style when
+- **Standardize IDs to `IRB_s0*`.** Examples: `12345_s025`,
+  `12345s025`, and `12345_b025` can resolve to the same canonical style when
   they are valid subject IDs.
 - **Reject unlikely record ID cells.** Very long text values are treated as
   unlikely primary record IDs.
@@ -28,8 +28,6 @@ Rules we implement:
 
 - `run.py`: CLI for applying REDCap subject ID recognition to one table column.
 - `presidio/redcap_subid_presidio.py`: reusable recognizer and canonicalizer.
-- `test_standardize_record_id.py`: unit tests for ID parsing and CLI behavior.
-- `dev/experiments/`: real and synthetic record ID examples.
 
 ## Copy-Paste Command Template
 

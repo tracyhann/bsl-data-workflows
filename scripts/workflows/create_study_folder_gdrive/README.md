@@ -77,9 +77,9 @@ For your template and personal Google Drive root:
 ```bash
 python3 scripts/workflows/create_study_folder_gdrive/run.py \
   --stage initialize \
-  --study-folder studies/53879-62882-OCD-TMS \
-  --study-name "OCD-TMS" \
-  --irb "53879-62882" \
+  --study-folder studies/12345-56789-STUDY \
+  --study-name "STUDY-NAME" \
+  --irb "12345-56789" \
   --template "https://drive.google.com/drive/folders/1OLGHgxPg9UsBDbOH6vgSjiS6dUW0lBCF?usp=sharing" \
   --destination root
 ```
@@ -89,9 +89,9 @@ If the destination should be a specific Drive folder:
 ```bash
 python3 scripts/workflows/create_study_folder_gdrive/run.py \
   --stage initialize \
-  --study-folder studies/53879-62882-OCD-TMS \
-  --study-name "OCD-TMS" \
-  --irb "53879-62882" \
+  --study-folder studies/12345-56789-STUDY \
+  --study-name "STUDY-NAME" \
+  --irb "12345-56789" \
   --template "https://drive.google.com/drive/folders/1OLGHgxPg9UsBDbOH6vgSjiS6dUW0lBCF?usp=sharing" \
   --destination "https://drive.google.com/drive/folders/DESTINATION_FOLDER_ID"
 ```
@@ -104,9 +104,9 @@ tries to find the standard Overview, No-PHI Data, and template folders under it.
 ```bash
 python3 scripts/workflows/create_study_folder_gdrive/run.py \
   --stage upload \
-  --study-folder studies/53879-62882-OCD-TMS \
-  --study-name "OCD-TMS" \
-  --irb "53879-62882" \
+  --study-folder studies/12345-56789-STUDY \
+  --study-name "STUDY-NAME" \
+  --irb "12345-56789" \
   --initialized-folder-id "https://drive.google.com/drive/folders/INITIALIZED_STUDY_FOLDER_ID"
 ```
 
@@ -115,9 +115,9 @@ Override destinations when needed:
 ```bash
 python3 scripts/workflows/create_study_folder_gdrive/run.py \
   --stage upload \
-  --study-folder studies/53879-62882-OCD-TMS \
-  --study-name "OCD-TMS" \
-  --irb "53879-62882" \
+  --study-folder studies/12345-56789-STUDY \
+  --study-name "STUDY-NAME" \
+  --irb "12345-56789" \
   --overview-destination "https://docs.google.com/spreadsheets/d/OVERVIEW_SHEET_ID/edit" \
   --cleaned-data-folder-id "https://drive.google.com/drive/folders/NO_PHI_DATA_FOLDER_ID" \
   --templates-folder-id "https://drive.google.com/drive/folders/BLANK_TEMPLATES_FOLDER_ID"
@@ -139,9 +139,9 @@ the Google data-map sheet by matching tab and column names.
 ```bash
 python3 scripts/workflows/create_study_folder_gdrive/run.py \
   --stage data-map \
-  --study-folder studies/53879-62882-OCD-TMS \
-  --study-name "OCD-TMS" \
-  --irb "53879-62882" \
+  --study-folder studies/12345-56789-STUDY \
+  --study-name "STUDY-NAME" \
+  --irb "12345-56789" \
   --initialized-folder-id "https://drive.google.com/drive/folders/INITIALIZED_STUDY_FOLDER_ID" \
   --data-map-destination "https://docs.google.com/spreadsheets/d/DATA_MAP_SHEET_ID/edit"
 ```
@@ -155,9 +155,9 @@ from the copied template folder.
 ```bash
 python3 scripts/workflows/create_study_folder_gdrive/run.py \
   --stage all \
-  --study-folder studies/53879-62882-OCD-TMS \
-  --study-name "OCD-TMS" \
-  --irb "53879-62882" \
+  --study-folder studies/12345-56789-STUDY \
+  --study-name "STUDY-NAME" \
+  --irb "12345-56789" \
   --template "https://drive.google.com/drive/folders/1OLGHgxPg9UsBDbOH6vgSjiS6dUW0lBCF?usp=sharing" \
   --destination root
 ```

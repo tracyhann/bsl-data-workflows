@@ -29,7 +29,6 @@ Rules we implement:
 ## Layout
 
 - `run.py`: CLI and merge implementation.
-- `test_merge_studies.py`: tests for workbook and dictionary merging.
 
 ## Required Input Structure
 
@@ -45,9 +44,9 @@ Each input study folder should contain:
 Set paths:
 
 ```bash
-STUDY1="studies/54909-BRAINS"
-STUDY2="studies/58807-BRAINS"
-MERGED_STUDY="studies/54909-58807-BRAINS"
+STUDY1="studies/12345-STUDY-A"
+STUDY2="studies/56789-STUDY-B"
+MERGED_STUDY="studies/12345-56789-STUDY"
 ```
 
 Run:

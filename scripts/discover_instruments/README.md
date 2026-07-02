@@ -24,7 +24,6 @@ Rules we implement:
 
 - `run.py`: CLI for reading CSV, TSV, XLSX, or XLS inputs.
 - `instrument_discovery.py`: instrument block discovery logic.
-- `test_discover_instruments.py`: tests for instrument boundary detection.
 
 ## Copy-Paste Command Template
 
